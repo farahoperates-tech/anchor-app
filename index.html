@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Anchor</title>
+  <meta name="description" content="A one-tap panic attack companion. Your own words, your own people, ready when you need them." />
+
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#3D5A63" />
+
+  <!-- iOS full-screen web app -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Anchor" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ============ OPENING ============ -->
+  <div id="intro" class="intro hidden" aria-hidden="true">
+    <p class="intro-welcome">Welcome to Anchor</p>
+    <p class="intro-text">you arrived</p>
+  </div>
+
+  <!-- ============ SETUP / SETTINGS ============ -->
+  <section id="screen-setup" class="screen">
+    <div class="setup-inner">
+      <header class="setup-header">
+        <button id="setup-back" class="icon-btn hidden" aria-label="Back">←</button>
+        <h1 id="setup-title">Let’s set up your anchor</h1>
+        <p id="setup-sub">Take your time. You only do this once, and everything stays on your phone — nothing is uploaded anywhere.</p>
+      </header>
+
+      <div class="field-group">
+        <h2>Your safe person</h2>
+        <p class="hint">Someone you trust. One tap will call them.</p>
+        <label class="field">
+          <span>Their name</span>
+          <input id="in-safe-name" type="text" autocomplete="off" placeholder="e.g. Mom, Sara, Omar" />
+        </label>
+        <label class="field">
+          <span>Their phone number</span>
+          <input id="in-safe-phone" type="tel" autocomplete="off" placeholder="e.g. +1 555 010 2233" />
+        </label>
+        <div class="field">
+          <span>A voice note from them</span>
+          <p class="hint tip">Ask them to record a short voice note — maybe reminding you how you got through this before, or just their voice saying you’re okay.</p>
+          <div class="voice-row">
+            <button type="button" class="voice-btn" id="voice-rec-1">● Record</button>
+            <button type="button" class="voice-btn" id="voice-up-1">Upload a file</button>
+            <button type="button" class="voice-btn hidden" id="voice-play-1">▶ Play</button>
+            <button type="button" class="voice-btn hidden" id="voice-del-1">Remove</button>
+          </div>
+          <input type="file" id="voice-file-1" accept="audio/*" class="hidden" />
+          <p class="hint voice-status" id="voice-status-1"></p>
+        </div>
+
+        <div id="person2-fields" class="hidden">
+          <h2 class="person2-title">Your second safe person</h2>
+          <p class="hint">A backup, for when the first can’t pick up.</p>
+          <label class="field">
+            <span>Their name</span>
+            <input id="in-safe-name2" type="text" autocomplete="off" placeholder="e.g. Dad, Lina, Sam" />
+          </label>
+          <label class="field">
+            <span>Their phone number</span>
+            <input id="in-safe-phone2" type="tel" autocomplete="off" placeholder="e.g. +1 555 010 2233" />
+          </label>
+          <div class="field">
+            <span>A voice note from them</span>
+            <p class="hint tip">Ask them to record a short voice note — maybe reminding you how you got through this before, or just their voice saying you’re okay.</p>
+            <div class="voice-row">
+              <button type="button" class="voice-btn" id="voice-rec-2">● Record</button>
+              <button type="button" class="voice-btn" id="voice-up-2">Upload a file</button>
+              <button type="button" class="voice-btn hidden" id="voice-play-2">▶ Play</button>
+              <button type="button" class="voice-btn hidden" id="voice-del-2">Remove</button>
+            </div>
+            <input type="file" id="voice-file-2" accept="audio/*" class="hidden" />
+            <p class="hint voice-status" id="voice-status-2"></p>
+          </div>
+        </div>
+        <button type="button" id="person-add" class="ghost-btn slim">＋ Add person</button>
+      </div>
+
+      <div class="field-group">
+        <h2>What helps you most?</h2>
+        <p class="hint sourced">Grounding and breathing methods drawn from WHO mental health guidance and established clinical practice (CBT/DBT).</p>
+        <p class="hint">Choose any that work for you — they’ll be ready and waiting when you need them.</p>
+        <div class="choice-row choice-col" role="group" aria-label="Calming techniques">
+          <button class="choice multi" data-value="box">Box breathing <small>4 in · 4 hold · 4 out · 4 hold</small></button>
+          <button class="choice multi" data-value="extended">Extended‑exhale breathing <small>4 in · 8 out</small></button>
+          <button class="choice multi" data-value="armraise">Arm‑raise breathing <small>arms up on inhale, down on exhale</small></button>
+          <button class="choice multi" data-value="54321">5‑4‑3‑2‑1 grounding <small>notice your senses, one by one</small></button>
+          <button class="choice multi" data-value="pmr">Progressive muscle relaxation <small>tense and release, group by group</small></button>
+          <button class="choice multi" data-value="tipp">Cold water reset (TIPP) <small>cold on your face or wrists</small></button>
+          <button class="choice multi" data-value="voice">Listen to my person’s voice, on repeat <small>loops their voice note while the breathing pacer runs</small></button>
+          <button class="choice multi" data-value="song">Listen to my calming song <small>Add your song link in the next step</small></button>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <h2>Calming sound</h2>
+        <p class="hint">Songs you love, or a soft built‑in tone.</p>
+        <div class="choice-row" role="radiogroup" aria-label="Calming sound">
+          <button class="choice" data-group="music" data-value="playlist">My songs</button>
+          <button class="choice" data-group="music" data-value="tone">Built‑in calm tone</button>
+        </div>
+        <div id="songs-field">
+          <div id="songs-list"></div>
+          <button id="song-add" class="ghost-btn slim">＋ Add another song</button>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <h2>Words from you, to you</h2>
+        <p class="hint">Written now while you’re calm — shown back to you word‑for‑word when things are hard. Every one of these is optional.</p>
+        <div id="personal-fields">
+          <label class="field">
+            <span>Something you’re proud of</span>
+            <textarea id="in-proud" rows="3" placeholder="e.g. finishing my degree while working nights"></textarea>
+          </label>
+          <label class="field">
+            <span>Something you want to reach or become one day</span>
+            <textarea id="in-goal" rows="3" placeholder="e.g. becoming a neuroscientist with my own lab"></textarea>
+          </label>
+          <label class="field">
+            <span>Your first genuinely happy childhood memory</span>
+            <textarea id="in-childhood" rows="3" placeholder="e.g. building sandcastles with my cousins every summer"></textarea>
+          </label>
+          <label class="field">
+            <span>Your safe space — a place, real or imagined, where you feel safe</span>
+            <textarea id="in-safespace" rows="3" placeholder="describe it, and what it’s like to be there"></textarea>
+          </label>
+          <label class="field">
+            <span>A moment someone showed you real kindness</span>
+            <textarea id="in-kindness" rows="3" placeholder="e.g. when my roommate sat with me all night before my exam"></textarea>
+          </label>
+        </div>
+        <button type="button" id="toggle-autowords" class="toggle-btn">Not sure what to write? Let Anchor find the words instead <small>Anchor will show gentle, universal reminders during hard moments</small></button>
+      </div>
+
+      <div class="field-group hidden" id="log-group">
+        <h2>Your private log</h2>
+        <p class="hint" id="log-summary"></p>
+        <ul id="log-list"></ul>
+        <button id="log-clear" class="ghost-btn">Clear log</button>
+      </div>
+
+      <p id="save-note" class="hint hidden"></p>
+      <button id="setup-save" class="primary-btn">Save my anchor</button>
+      <p class="privacy-note">Everything lives only on this phone. No account, no cloud.</p>
+    </div>
+  </section>
+
+  <!-- ============ HOME ============ -->
+  <section id="screen-home" class="screen">
+    <div class="home-inner">
+      <div class="wordmark">
+        <span class="wordmark-dot"></span>
+        <span>Anchor</span>
+      </div>
+      <div class="home-spacer"></div>
+      <button id="btn-panic" class="panic-btn" aria-label="Start calming session">
+        <span class="panic-btn-text">I’m<br/>panicking<br/>now</span>
+      </button>
+      <p class="home-hint">Tap once. I’ll take it from here — no questions asked.</p>
+      <button id="btn-secondary" class="secondary-btn">Setup my preferences</button>
+      <p class="setup-subtext">Personalize Anchor now, so it’s ready to help the moment a panic attack starts.</p>
+    </div>
+  </section>
+
+  <!-- ============ PANIC MODE ============ -->
+  <section id="screen-panic" class="screen">
+    <canvas id="pacer"></canvas>
+    <div id="breath-glow" aria-hidden="true"></div>
+
+    <div class="panic-top">
+      <button id="btn-better" class="soft-link">I’m feeling better</button>
+      <div id="chip-row" class="chip-row"></div>
+    </div>
+
+    <div id="breath-label" class="breath-label" aria-live="polite">Breathe in</div>
+
+    <div id="affirmation" class="affirmation" aria-live="polite"></div>
+
+    <div id="guide-card" class="grounding hidden" role="dialog" aria-label="Guided exercise">
+      <p id="guide-step"></p>
+      <div id="guide-dots" class="dots"></div>
+      <p class="grounding-hint">tap to continue when you’re ready</p>
+    </div>
+
+    <div class="panic-actions">
+      <button id="btn-music" class="action-btn music">
+        <span class="action-icon">♫</span>
+        <span id="music-label">Play my calming music</span>
+      </button>
+      <a id="btn-call" class="action-btn call" href="#">
+        <span class="action-icon">☎</span>
+        <span id="call-label">Call</span>
+      </a>
+      <a id="btn-call2" class="action-btn call2 hidden" href="#">
+        <span class="action-icon">☎</span>
+        <span id="call-label2">Call</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- ============ AFTER / LOG ============ -->
+  <section id="screen-after" class="screen">
+    <div class="after-inner">
+      <h1>That took strength.</h1>
+      <p>It passed, and you were here for all of it. Be gentle with yourself for the rest of today.</p>
+      <button id="btn-log" class="primary-btn">Log this episode</button>
+      <button id="btn-done" class="ghost-btn">Done</button>
+      <p class="privacy-note">Logs are just a timestamp, kept privately on this phone.</p>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
