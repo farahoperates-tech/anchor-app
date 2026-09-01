@@ -56,7 +56,16 @@ English with one console warning. No i18n library.
   is switched with the language, but browsers read the manifest only at
   install time — the home-screen name/description change only after removing
   and re-adding the app.
-- `privacy.html` carries the policy in English (`#en`) and German (`#de`).
+- `privacy.html` carries the policy in English (`#en`) and German (`#de`);
+  `terms.html` the terms of use (German first, `#de` / `#en`).
+
+## Disclaimer flow
+
+- A one-time disclaimer screen sits in front of **setup** only (acceptance
+  stored as `meta.consentAt`). It never appears in front of panic mode.
+- If a brand-new user's very first tap is the panic button, one quiet line
+  ("New or different from usual? → 112 / 911") is shown at the top of panic
+  mode, once (`meta.panicNoticeAt`). Never a modal, never blocking.
 
 ## Storage
 

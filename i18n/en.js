@@ -129,6 +129,7 @@ window.ANCHOR_I18N.en = {
     saveNoStorage: "This browser won’t let Anchor keep data between visits (private mode?). Your anchor will work until you close the app.",
     privacy: "Everything lives only on this phone. No account, no cloud.",
     privacyLink: "Privacy policy",
+    termsLink: "Terms",
     disclaimer: "Anchor is a companion, not medical care. In an emergency, call your local emergency number.",
   },
 
@@ -270,12 +271,12 @@ window.ANCHOR_I18N.en = {
       // your body is on your side
       "Your heart is racing because your body is trying to protect you. It’s on your side.",
       "This is adrenaline, not danger. It feels enormous, but it’s just chemistry moving through.",
-      "A racing heart is a strong heart doing its job. It can handle this easily.",
+      "A racing heart is a heart doing its job. The pace settles again.",
       "Dizziness, tingling, a tight chest — these are panic’s signatures. Uncomfortable, not dangerous.",
       "Your body thinks it’s helping. Thank it, and let it stand down.",
-      "You are not sick. You are not dying. Your alarm system is just ringing too loud.",
+      "Panic feels like dying — that’s its oldest trick. Your alarm system is just ringing too loud.",
       "Shaky hands mean your body is ready for action it doesn’t need. It will settle.",
-      "That tight chest is muscle tension, not your heart failing. It loosens when you exhale.",
+      "In panic, a tight chest usually comes from tense muscles. It loosens when you exhale.",
       "Adrenaline burns off in minutes. Your body is already clearing it.",
       "Your nervous system fired an alarm. There is no fire. Alarms wind down.",
       "That wave of heat is blood moving where your body thinks it’s needed. It passes.",
@@ -288,7 +289,7 @@ window.ANCHOR_I18N.en = {
       "You cannot breathe wrong here. Any breath that comes is fine.",
       "Let your shoulders drop with the next breath out.",
       "Slow the exhale, and the heart follows. It’s wired that way.",
-      "Air is coming in fine — even when it feels tight, you are getting enough.",
+      "Even when it feels tight — let the breath slow down. It finds its way.",
       "Breathe with the rhythm on the screen. Borrow it until yours comes back.",
       "Each exhale is a small message to your body: we’re safe.",
       "Just this breath. Not the next hour. Just this breath.",
@@ -365,6 +366,16 @@ window.ANCHOR_I18N.en = {
       "You’re doing it right now — getting through. This counts.",
       "Small steady things are on your side: the floor, your breath, the next minute.",
       "You’re okay. Not perfectly, not forever — just okay enough for this minute. That’s all you need.",
+    ],
+  },
+
+  consent: {
+    text: "Before we start: Anchor is a self-help companion for panic attacks — not a medical device and no substitute for medical care.\n\nImportant: if symptoms are new to you or feel different from your panic — especially chest pain, shortness of breath, or weakness — call emergency services (112/911) or get it checked.\n\nAnchor assumes you know your panic.",
+    accept: "I understand",
+    panicNotice: "New or different from usual? →",
+    panicNoticeLinks: [
+      { label: "112", tel: "112" },
+      { label: "911", tel: "911" },
     ],
   },
 

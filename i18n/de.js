@@ -130,6 +130,7 @@ window.ANCHOR_I18N.de = {
     saveNoStorage: "Dieser Browser lässt Anchor nichts zwischen Besuchen speichern (privater Modus?). Dein Anker funktioniert, bis du die App schließt.",
     privacy: "Alles bleibt nur auf diesem Handy. Kein Konto, keine Cloud.",
     privacyLink: "Datenschutz",
+    termsLink: "Nutzungsbedingungen",
     disclaimer: "Anchor ist ein Begleiter, keine medizinische Hilfe. Im Notfall ruf deine lokale Notrufnummer.",
   },
 
@@ -270,12 +271,12 @@ window.ANCHOR_I18N.de = {
       // dein Körper ist auf deiner Seite
       "Dein Herz rast, weil dein Körper dich beschützen will. Er ist auf deiner Seite.",
       "Das ist Adrenalin, keine Gefahr. Es fühlt sich riesig an, aber es ist nur Chemie, die durchzieht.",
-      "Ein rasendes Herz ist ein starkes Herz, das seinen Job macht. Das hält es locker aus.",
+      "Ein rasendes Herz ist ein Herz, das seinen Job macht. Das Tempo legt sich wieder.",
       "Schwindel, Kribbeln, ein enger Brustkorb — das sind die Unterschriften der Panik. Unangenehm, nicht gefährlich.",
       "Dein Körper glaubt, er hilft. Bedank dich bei ihm, und lass ihn Ruhe geben.",
-      "Du bist nicht krank. Du stirbst nicht. Deine Alarmanlage ist nur zu laut eingestellt.",
+      "Panik fühlt sich an wie Sterben — das ist ihr ältester Trick. Deine Alarmanlage ist nur zu laut eingestellt.",
       "Zittrige Hände heißen: Dein Körper ist bereit für etwas, das gar nicht kommt. Das legt sich.",
-      "Die Enge in der Brust ist Muskelspannung, nicht dein Herz. Beim Ausatmen wird sie lockerer.",
+      "Bei Panik kommt die Enge in der Brust meist von angespannten Muskeln. Beim Ausatmen wird sie lockerer.",
       "Adrenalin verbrennt in Minuten. Dein Körper räumt es schon weg.",
       "Dein Nervensystem hat Alarm geschlagen. Es brennt aber nicht. Alarme klingen ab.",
       "Diese Hitzewelle ist Blut, das dahin fließt, wo dein Körper es gerade braucht. Sie vergeht.",
@@ -288,7 +289,7 @@ window.ANCHOR_I18N.de = {
       "Du kannst hier nicht falsch atmen. Jeder Atemzug, der kommt, ist gut.",
       "Lass beim nächsten Ausatmen die Schultern fallen.",
       "Mach das Ausatmen langsamer, und das Herz folgt. So ist es verdrahtet.",
-      "Die Luft kommt gut rein — auch wenn es eng ist, du bekommst genug.",
+      "Auch wenn es sich eng anfühlt — lass den Atem langsam werden, er findet seinen Weg.",
       "Atme mit dem Rhythmus auf dem Bildschirm. Leih ihn dir, bis deiner zurückkommt.",
       "Jedes Ausatmen ist eine kleine Nachricht an deinen Körper: Wir sind sicher.",
       "Nur dieser Atemzug. Nicht die nächste Stunde. Nur dieser Atemzug.",
@@ -365,6 +366,15 @@ window.ANCHOR_I18N.de = {
       "Du machst es gerade — du kommst da durch. Das zählt.",
       "Kleine, ruhige Dinge sind auf deiner Seite: der Boden, dein Atem, die nächste Minute.",
       "Du bist okay. Nicht perfekt, nicht für immer — nur okay genug für diese Minute. Mehr brauchst du nicht.",
+    ],
+  },
+
+  consent: {
+    text: "Bevor es losgeht: Anchor ist eine Selbsthilfe-Begleitung für Panikattacken — kein Medizinprodukt und kein Ersatz für ärztliche Hilfe.\n\nWichtig: Wenn Symptome neu für dich sind oder sich anders anfühlen als deine Panik — besonders Brustschmerz, Atemnot oder Schwäche — wähle den Notruf (112) oder lass es ärztlich abklären.\n\nAnchor geht davon aus, dass du deine Panikattacken kennst.",
+    accept: "Verstanden",
+    panicNotice: "Neu oder anders als sonst? →",
+    panicNoticeLinks: [
+      { label: "112", tel: "112" },
     ],
   },
 

@@ -200,8 +200,20 @@
 
       <p id="save-note" class="hint hidden"></p>
       <button id="setup-save" class="primary-btn" data-i18n="setup.save"></button>
-      <p class="privacy-note"><span data-i18n="setup.privacy"></span> <a href="privacy.html" class="privacy-link" data-i18n="setup.privacyLink"></a></p>
+      <p class="privacy-note"><span data-i18n="setup.privacy"></span> <a href="privacy.html" class="privacy-link" data-i18n="setup.privacyLink"></a> · <a href="terms.html" class="privacy-link" data-i18n="setup.termsLink"></a></p>
       <p class="privacy-note" data-i18n="setup.disclaimer"></p>
+    </div>
+  </section>
+
+  <!-- ============ ONE-TIME DISCLAIMER — before setup, never in panic mode ============ -->
+  <section id="screen-consent" class="screen">
+    <div class="consent-inner">
+      <div class="wordmark">
+        <span class="wordmark-dot"></span>
+        <span data-i18n="home.wordmark"></span>
+      </div>
+      <p class="consent-text" data-i18n="consent.text" data-i18n-br></p>
+      <button id="btn-consent" class="primary-btn" data-i18n="consent.accept"></button>
     </div>
   </section>
 
@@ -231,6 +243,9 @@
       <button id="btn-better" class="soft-link" data-i18n="panic.better"></button>
       <div id="chip-row" class="chip-row"></div>
     </div>
+
+    <!-- first-ever panic session only, before the disclaimer was seen: one quiet line, never a modal -->
+    <p id="panic-notice" class="panic-notice hidden"></p>
 
     <div id="breath-label" class="breath-label" aria-live="polite"></div>
 

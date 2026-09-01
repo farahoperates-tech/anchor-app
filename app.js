@@ -28,6 +28,8 @@ function emptySettings() {
 let settings = emptySettings();
 const voiceNotes = { 1: null, 2: null };   // Blobs
 let storageOk = true;                       // false → IndexedDB unavailable (memory only)
+let consentGiven = false;                   // one-time disclaimer accepted (meta.consentAt)
+let panicNoticeShown = false;               // the one quiet first-panic line was shown (meta.panicNoticeAt)
 
 function hasSetup() {
   const s = settings;
@@ -93,6 +95,8 @@ function applyLoaded(data) {
     .filter((v) => v && (v.kind === "file" ? v.blob instanceof Blob : !!v.url));
   const meta = (k) => (data.meta.find((e) => e.key === k) || {}).value;
   s.crisisNumber = meta("crisisNumber") || "";
+  consentGiven = !!meta("consentAt");
+  panicNoticeShown = !!meta("panicNoticeAt");
   settings = s;
   voiceNotes[1] = null; voiceNotes[2] = null;
   data.voice.forEach((e) => { if (e.value instanceof Blob && (e.key === 1 || e.key === 2)) voiceNotes[e.key] = e.value; });
@@ -646,7 +650,7 @@ function backupStatus(msg) { $("backup-status").textContent = msg || ""; }
 async function buildBackupPayload() {
   const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques", "log", "meta"]);
   const plain = (rows) => rows.map((e) => ({ key: e.key, value: e.value }));
-  const prefs = plain(data.meta.filter((e) => e.key === "lang" || e.key === "crisisNumber"));
+  const prefs = plain(data.meta.filter((e) => e.key === "lang" || e.key === "crisisNumber" || e.key === "consentAt"));
   const voice = [];
   for (const e of data.voice) {
     if (e.value instanceof Blob) voice.push({ key: e.key, value: await AnchorBackup.blobToRecord(e.value) });
@@ -688,7 +692,7 @@ function payloadToOps(p) {
     }
   });
   (p.prefs || []).forEach((e) => {
-    if (e.key === "lang" || e.key === "crisisNumber") ops.push({ store: "meta", op: "put", key: e.key, value: e.value });
+    if (e.key === "lang" || e.key === "crisisNumber" || e.key === "consentAt") ops.push({ store: "meta", op: "put", key: e.key, value: e.value });
   });
   ops.push({ store: "meta", op: "put", key: "importedAt", value: Date.now() });
   return ops;
@@ -772,7 +776,36 @@ $("btn-panic").addEventListener("click", () => {
   unlockAudio();          // synchronously, inside the tap — iOS needs this
   startPanic();
 });
-$("btn-secondary").addEventListener("click", () => openSetup(hasSetup()));
+/* the one-time disclaimer sits in front of SETUP only — never in front of panic */
+$("btn-secondary").addEventListener("click", async () => {
+  await dataReady;
+  if (consentGiven) openSetup(hasSetup());
+  else { show("screen-consent"); $("screen-consent").scrollTop = 0; }
+});
+$("btn-consent").addEventListener("click", () => {
+  consentGiven = true;
+  if (storageOk) AnchorStore.set("meta", "consentAt", Date.now()).catch(() => {});
+  openSetup(hasSetup());
+});
+
+/* first-ever panic session before the disclaimer was seen: one quiet line,
+   shown once, never a modal, never blocking */
+function renderPanicNotice() {
+  const el = $("panic-notice");
+  if (!dataLoaded || consentGiven || panicNoticeShown) { el.classList.add("hidden"); return; }
+  el.textContent = "";
+  el.appendChild(document.createTextNode(t("consent.panicNotice") + " "));
+  t("consent.panicNoticeLinks").forEach((link, i) => {
+    if (i) el.appendChild(document.createTextNode(" / "));
+    const a = document.createElement("a");
+    a.href = "tel:" + link.tel;
+    a.textContent = link.label;
+    el.appendChild(a);
+  });
+  el.classList.remove("hidden");
+  panicNoticeShown = true;
+  if (storageOk) AnchorStore.set("meta", "panicNoticeAt", Date.now()).catch(() => {});
+}
 
 /* ============================================================
    PARTICLE PACER — drifting pixel cluster, lava-lamp feel
@@ -1379,6 +1412,7 @@ function applyPersonalization() {
       techniques.some((t) => GUIDES[t])) {
     startGuide(guideIds[0]);
   }
+  renderPanicNotice();
   syncBottomHeight();
 }
 
@@ -1431,6 +1465,7 @@ function endPanic(toAfterScreen) {
   stopAffirmations();
   stopGuide();
   stopVoiceLoop();
+  $("panic-notice").classList.add("hidden");
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   show(toAfterScreen ? "screen-after" : "screen-home");
 }
