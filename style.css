@@ -15,6 +15,7 @@
   --radius: 26px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --panic-bottom: 150px;   /* measured height of the panic-screen bottom stack (set from JS) */
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -70,6 +71,16 @@ body {
 }
 .intro.in .intro-text { opacity: 1; }
 .intro.out { opacity: 0; pointer-events: none; }
+.intro-skip {
+  position: absolute;
+  bottom: calc(var(--safe-bottom) + 28px);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  opacity: 0;
+  transition: opacity 1.3s ease 0.6s;
+  pointer-events: none;
+}
+.intro.in .intro-skip { opacity: 0.6; }
 
 /* ============ Screens ============ */
 .screen {
@@ -284,6 +295,23 @@ body {
   outline: none;
 }
 .song-row input:focus { border-color: var(--sage); }
+.song-row .song-file-name {
+  flex: 1;
+  min-height: 58px;
+  padding: 16px;
+  border: 1.5px solid var(--sage-soft);
+  border-radius: 18px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.song-row .song-file-name small { color: var(--ink-soft); font-size: 0.82rem; flex: none; }
 .song-remove {
   min-width: 48px;
   border: none;
@@ -328,7 +356,6 @@ body {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
-  opacity: 0.75;
 }
 .wordmark-dot {
   width: 12px; height: 12px;
@@ -369,7 +396,6 @@ body {
   margin-top: 22px;
   color: var(--ink-soft);
   font-size: 0.98rem;
-  opacity: 0.85;
 }
 
 .setup-subtext {
@@ -380,7 +406,6 @@ body {
   color: var(--ink-soft);
   font-size: 0.88rem;
   line-height: 1.45;
-  opacity: 0.85;
 }
 
 .secondary-btn {
@@ -446,7 +471,7 @@ body {
   border: none;
   background: rgba(245, 241, 234, 0.08);
   color: rgba(245, 241, 234, 0.85);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 600;
   font-family: inherit;
   min-height: 48px;
@@ -458,7 +483,7 @@ body {
   border: 1px solid rgba(169, 191, 164, 0.5);
   background: rgba(169, 191, 164, 0.14);
   color: var(--sage-soft);
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 600;
   font-family: inherit;
   min-height: 48px;
@@ -486,11 +511,11 @@ body {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--safe-bottom) + 196px);
+  bottom: calc(var(--safe-bottom) + var(--panic-bottom) + 34px);
   width: min(86vw, 520px);
   color: #EFF4EC;
-  font-size: 1.12rem;
-  line-height: 1.6;
+  font-size: 1.3rem;
+  line-height: 1.55;
   text-align: center;
   text-shadow: 0 1px 3px rgba(26, 42, 48, 0.7), 0 0 24px rgba(26, 42, 48, 0.55);
   z-index: 3;
@@ -499,9 +524,11 @@ body {
   pointer-events: none;
 }
 .affirmation.visible { opacity: 1; }
+/* one thing at a time: while a guide card is up, the phrase steps aside */
+#screen-panic.guide-on .affirmation { opacity: 0; }
 .affirmation-lead {
   display: block;
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   opacity: 0.75;
@@ -539,17 +566,57 @@ body {
   background: rgba(183, 174, 200, 0.3);
 }
 .dots span.done { background: var(--lavender); }
-.grounding-hint { color: rgba(241, 237, 246, 0.78); font-size: 0.85rem; }
+.grounding-hint { color: rgba(241, 237, 246, 0.78); font-size: 1rem; }
+.guide-caution {
+  color: rgba(241, 237, 246, 0.85);
+  font-size: 1rem;
+  line-height: 1.45;
+  margin: -6px 0 16px;
+}
 
-.panic-actions {
+/* bottom stack: action buttons → (text fallback) → quiet crisis line */
+.panic-bottom {
   position: absolute;
   left: 0; right: 0;
-  bottom: calc(var(--safe-bottom) + 22px);
+  bottom: calc(var(--safe-bottom) + 14px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
+  z-index: 4;
+}
+.panic-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
-  padding: 0 16px;
-  z-index: 4;
+}
+.call-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fallback-hint {
+  color: rgba(245, 241, 234, 0.85);
+  font-size: 1rem;
+  text-align: center;
+}
+.action-btn.sms {
+  background: rgba(245, 241, 234, 0.12);
+  border: 1px solid rgba(245, 241, 234, 0.35);
+  color: #F5F1EA;
+}
+.crisis-line {
+  text-align: center;
+  color: rgba(245, 241, 234, 0.62);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  padding: 2px 0 0;
+}
+.crisis-line a {
+  color: rgba(245, 241, 234, 0.8);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 6px 2px;   /* comfortable tap target without looking like a button */
 }
 .action-btn {
   flex: 1;
@@ -562,7 +629,7 @@ body {
   border: none;
   border-radius: 24px;
   font-family: inherit;
-  font-size: 0.98rem;
+  font-size: 1.02rem;
   font-weight: 700;
   cursor: pointer;
   text-decoration: none;
@@ -584,6 +651,12 @@ body {
   background: linear-gradient(180deg, var(--sage), #92A98D);
   color: #22363D;
   box-shadow: 0 6px 20px rgba(146, 169, 141, 0.35);
+}
+/* the other person becomes the obvious next tap once a call was tried */
+.action-btn.pulse { animation: nudge 2.4s ease-in-out infinite; }
+@keyframes nudge {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.04); }
 }
 
 /* ============ After ============ */

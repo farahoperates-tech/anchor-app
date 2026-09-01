@@ -15,6 +15,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Anchor" />
   <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
 
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -24,6 +25,7 @@
   <div id="intro" class="intro hidden" aria-hidden="true">
     <p class="intro-welcome">Welcome to Anchor</p>
     <p class="intro-text">you arrived</p>
+    <p class="intro-skip">tap anywhere — the panic button is right underneath</p>
   </div>
 
   <!-- ============ SETUP / SETTINGS ============ -->
@@ -45,6 +47,10 @@
         <label class="field">
           <span>Their phone number</span>
           <input id="in-safe-phone" type="tel" autocomplete="off" placeholder="e.g. +1 555 010 2233" />
+        </label>
+        <label class="field">
+          <span>A text to send them if they don’t pick up</span>
+          <textarea id="in-safe-sms" rows="2" placeholder="Ich habe gerade einen schweren Moment. Kannst du mich anrufen? 🖤"></textarea>
         </label>
         <div class="field">
           <span>A voice note from them</span>
@@ -69,6 +75,10 @@
           <label class="field">
             <span>Their phone number</span>
             <input id="in-safe-phone2" type="tel" autocomplete="off" placeholder="e.g. +1 555 010 2233" />
+          </label>
+          <label class="field">
+            <span>A text to send them if they don’t pick up</span>
+            <textarea id="in-safe-sms2" rows="2" placeholder="Ich habe gerade einen schweren Moment. Kannst du mich anrufen? 🖤"></textarea>
           </label>
           <div class="field">
             <span>A voice note from them</span>
@@ -96,7 +106,7 @@
           <button class="choice multi" data-value="armraise">Arm‑raise breathing <small>arms up on inhale, down on exhale</small></button>
           <button class="choice multi" data-value="54321">5‑4‑3‑2‑1 grounding <small>notice your senses, one by one</small></button>
           <button class="choice multi" data-value="pmr">Progressive muscle relaxation <small>tense and release, group by group</small></button>
-          <button class="choice multi" data-value="tipp">Cold water reset (TIPP) <small>cold on your face or wrists</small></button>
+          <button class="choice multi" data-value="tipp">Cold water reset (TIPP) <small>cold on your face or wrists · nicht geeignet bei Herzerkrankungen oder Herzrhythmusstörungen</small></button>
           <button class="choice multi" data-value="voice">Listen to my person’s voice, on repeat <small>loops their voice note while the breathing pacer runs</small></button>
           <button class="choice multi" data-value="song">Listen to my calming song <small>Add your song link in the next step</small></button>
         </div>
@@ -104,14 +114,19 @@
 
       <div class="field-group">
         <h2>Calming sound</h2>
-        <p class="hint">Songs you love, or a soft built‑in tone.</p>
+        <p class="hint">Songs you love, or a soft built‑in tone. Song files play right here, offline — links open in their app.</p>
         <div class="choice-row" role="radiogroup" aria-label="Calming sound">
           <button class="choice" data-group="music" data-value="playlist">My songs</button>
           <button class="choice" data-group="music" data-value="tone">Built‑in calm tone</button>
         </div>
         <div id="songs-field">
           <div id="songs-list"></div>
-          <button id="song-add" class="ghost-btn slim">＋ Add another song</button>
+          <div class="voice-row">
+            <button type="button" id="song-add" class="voice-btn">＋ Add a link</button>
+            <button type="button" id="song-upload" class="voice-btn">Upload a song file</button>
+          </div>
+          <input type="file" id="song-file" accept="audio/*" class="hidden" />
+          <p class="hint voice-status" id="song-status"></p>
         </div>
       </div>
 
@@ -150,9 +165,25 @@
         <button id="log-clear" class="ghost-btn">Clear log</button>
       </div>
 
+      <div class="field-group hidden" id="backup-group">
+        <h2>Backup</h2>
+        <p class="hint">For if you ever lose your phone. Stays a file, goes nowhere. Locked with a passphrase only you know — without it, the file is unreadable.</p>
+        <label class="field">
+          <span>Passphrase for the backup file</span>
+          <input id="backup-pass" type="password" autocomplete="new-password" placeholder="at least 6 characters" />
+        </label>
+        <div class="voice-row">
+          <button type="button" class="voice-btn" id="backup-export">Export backup</button>
+          <button type="button" class="voice-btn" id="backup-import">Import backup</button>
+        </div>
+        <input type="file" id="backup-file" accept=".anchor,application/octet-stream" class="hidden" />
+        <p class="hint voice-status" id="backup-status"></p>
+      </div>
+
       <p id="save-note" class="hint hidden"></p>
       <button id="setup-save" class="primary-btn">Save my anchor</button>
       <p class="privacy-note">Everything lives only on this phone. No account, no cloud.</p>
+      <p class="privacy-note">Anchor is a companion, not medical care. In an emergency, call 112.</p>
     </div>
   </section>
 
@@ -164,7 +195,7 @@
         <span>Anchor</span>
       </div>
       <div class="home-spacer"></div>
-      <button id="btn-panic" class="panic-btn" aria-label="Start calming session">
+      <button id="btn-panic" class="panic-btn" aria-label="I’m panicking now — start calming session">
         <span class="panic-btn-text">I’m<br/>panicking<br/>now</span>
       </button>
       <p class="home-hint">Tap once. I’ll take it from here — no questions asked.</p>
@@ -189,23 +220,43 @@
 
     <div id="guide-card" class="grounding hidden" role="dialog" aria-label="Guided exercise">
       <p id="guide-step"></p>
+      <p id="guide-caution" class="guide-caution hidden"></p>
       <div id="guide-dots" class="dots"></div>
       <p class="grounding-hint">tap to continue when you’re ready</p>
     </div>
 
-    <div class="panic-actions">
-      <button id="btn-music" class="action-btn music">
-        <span class="action-icon">♫</span>
-        <span id="music-label">Play my calming music</span>
-      </button>
-      <a id="btn-call" class="action-btn call" href="#">
-        <span class="action-icon">☎</span>
-        <span id="call-label">Call</span>
-      </a>
-      <a id="btn-call2" class="action-btn call2 hidden" href="#">
-        <span class="action-icon">☎</span>
-        <span id="call-label2">Call</span>
-      </a>
+    <div id="panic-bottom" class="panic-bottom">
+      <div class="panic-actions">
+        <button id="btn-music" class="action-btn music">
+          <span class="action-icon">♫</span>
+          <span id="music-label">Play my calming music</span>
+        </button>
+        <a id="btn-call" class="action-btn call hidden" href="#">
+          <span class="action-icon">☎</span>
+          <span id="call-label">Call</span>
+        </a>
+        <a id="btn-call2" class="action-btn call2 hidden" href="#">
+          <span class="action-icon">☎</span>
+          <span id="call-label2">Call</span>
+        </a>
+      </div>
+
+      <!-- shown on this same screen once a call was tapped -->
+      <div id="call-fallback" class="call-fallback hidden">
+        <p class="fallback-hint">Not reaching them? A text is ready to send.</p>
+        <div class="panic-actions">
+          <a id="btn-sms" class="action-btn sms hidden" href="#">
+            <span class="action-icon">✉</span>
+            <span id="sms-label">Text</span>
+          </a>
+          <a id="btn-sms2" class="action-btn sms hidden" href="#">
+            <span class="action-icon">✉</span>
+            <span id="sms-label2">Text</span>
+          </a>
+        </div>
+      </div>
+
+      <p class="crisis-line">Brauchst du mehr? <a href="tel:112">112</a> · <a href="tel:08001110111">Telefonseelsorge 0800 111 0 111</a></p>
     </div>
   </section>
 
@@ -220,6 +271,8 @@
     </div>
   </section>
 
+  <script src="storage.js"></script>
+  <script src="backup.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

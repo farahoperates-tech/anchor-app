@@ -1,10 +1,12 @@
 /* Anchor service worker — network-first so updates show up right away,
    with the cache as an offline fallback */
-const CACHE = "anchor-v8";
+const CACHE = "anchor-v10";
 const ASSETS = [
   ".",
   "index.html",
   "style.css",
+  "storage.js",
+  "backup.js",
   "app.js",
   "manifest.json",
   "icons/icon-180.png",

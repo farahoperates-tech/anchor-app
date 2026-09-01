@@ -1,89 +1,183 @@
-/* ============ Anchor — app logic ============ */
+/* ============ Anchor — app logic ============
+   Covenant: one tap, works offline, nothing leaves the phone,
+   never loses the user's plan. */
 "use strict";
-
-const SETTINGS_KEY = "anchor.settings";
-const LOG_KEY = "anchor.log";
 
 const $ = (id) => document.getElementById(id);
 
-/* ---------- state ---------- */
-
-function loadSettings() {
-  let s;
-  try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY)); }
-  catch { s = null; }
-  if (!s) return null;
-  // migrate v1 shape (single technique string, single playlist link)
-  if (!s.techniques) {
-    const map = { breathing: ["extended"], grounding: ["54321"], both: ["extended", "54321"] };
-    s.techniques = map[s.technique] || [];
-  }
-  if (!s.songs) s.songs = s.playlist ? [s.playlist] : [];
-  return s;
-}
-function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
-
-function loadLog() {
-  try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }
-  catch { return []; }
-}
-function saveLog(entries) { localStorage.setItem(LOG_KEY, JSON.stringify(entries)); }
+const DEFAULT_SMS = "Ich habe gerade einen schweren Moment. Kannst du mich anrufen? 🖤";
+const LEGACY_SETTINGS_KEY = "anchor.settings";
+const LEGACY_LOG_KEY = "anchor.log";
+const LEGACY_LAST_SEEN_KEY = "anchor.lastSeen";
 
 /* ============================================================
-   TESTING ONLY — auto-reset for tester handoff.
-   After 5+ minutes away from the app, everything (setup, log,
-   intro flag) is wiped so the next open starts from zero.
-   Set TEST_MODE to false (or delete this block) for real users.
+   STATE — in memory, mirrored to IndexedDB (see storage.js)
    ============================================================ */
-const TEST_MODE = true;
-const TEST_RESET_AFTER_MS = 5 * 60 * 1000;
-const LAST_SEEN_KEY = "anchor.lastSeen";
 
-function testWipeAll() {
-  try {
-    localStorage.removeItem(SETTINGS_KEY);
-    localStorage.removeItem(LOG_KEY);
-    sessionStorage.removeItem("anchor.introPlayed");
-  } catch {}
+function emptySettings() {
+  return {
+    safeName: "", safePhone: "", safeSms: "",
+    safeName2: "", safePhone2: "", safeSms2: "",
+    techniques: [], musicMode: "playlist",
+    songs: [],            // [{ kind: "link", url } | { kind: "file", name, type, blob }]
+    autoWords: false,
+    proud: "", goal: "", childhood: "", safeSpace: "", kindness: "",
+  };
 }
 
-function testMarkSeen() {
-  try { localStorage.setItem(LAST_SEEN_KEY, String(Date.now())); } catch {}
-}
-
-if (TEST_MODE) {
-  const last = Number(localStorage.getItem(LAST_SEEN_KEY) || 0);
-  if (last && Date.now() - last > TEST_RESET_AFTER_MS) testWipeAll();
-  testMarkSeen();
-  // refresh the timestamp only while the app is actually in front of them
-  setInterval(() => {
-    if (document.visibilityState === "visible") testMarkSeen();
-  }, 20000);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-      testMarkSeen();
-    } else {
-      const l = Number(localStorage.getItem(LAST_SEEN_KEY) || 0);
-      if (l && Date.now() - l > TEST_RESET_AFTER_MS) {
-        testWipeAll();
-        location.reload();
-      }
-    }
-  });
-  window.addEventListener("pagehide", testMarkSeen);
-}
-
-let settings = loadSettings();
+let settings = emptySettings();
+const voiceNotes = { 1: null, 2: null };   // Blobs
+let storageOk = true;                       // false → IndexedDB unavailable (memory only)
 
 function hasSetup() {
-  return !!(settings && (settings.safeName || settings.safePhone ||
-    settings.safeName2 || settings.safePhone2 ||
-    settings.voiceNote || settings.voiceNote2 ||
-    settings.proud || settings.goal ||
-    settings.childhood || settings.safeSpace || settings.kindness ||
-    settings.autoWords ||
-    (settings.techniques && settings.techniques.length) ||
-    (settings.songs && settings.songs.length)));
+  const s = settings;
+  return !!(s.safeName || s.safePhone || s.safeName2 || s.safePhone2 ||
+    voiceNotes[1] || voiceNotes[2] ||
+    s.proud || s.goal || s.childhood || s.safeSpace || s.kindness ||
+    s.autoWords ||
+    (s.techniques && s.techniques.length) ||
+    (s.songs && s.songs.length));
+}
+
+/* ---------- persistence ---------- */
+
+function snapshotOps() {
+  const s = settings;
+  const ops = [
+    { store: "persons", op: "put", key: 1, value: { name: s.safeName, phone: s.safePhone, sms: s.safeSms } },
+    { store: "persons", op: "put", key: 2, value: { name: s.safeName2, phone: s.safePhone2, sms: s.safeSms2 } },
+    { store: "words", op: "put", key: "words", value: {
+      proud: s.proud, goal: s.goal, childhood: s.childhood,
+      safeSpace: s.safeSpace, kindness: s.kindness, autoWords: !!s.autoWords,
+    } },
+    { store: "techniques", op: "put", key: "prefs", value: { techniques: [...s.techniques], musicMode: s.musicMode } },
+    { store: "songs", op: "clear" },
+  ];
+  s.songs.forEach((song, i) => {
+    const value = song.kind === "file"
+      ? { kind: "file", name: song.name, type: song.type, blob: song.blob }
+      : { kind: "link", url: song.url };
+    ops.push({ store: "songs", op: "put", key: i, value });
+  });
+  [1, 2].forEach((slot) => {
+    ops.push(voiceNotes[slot]
+      ? { store: "voice", op: "put", key: slot, value: voiceNotes[slot] }
+      : { store: "voice", op: "delete", key: slot });
+  });
+  return ops;
+}
+
+async function persistSettings() {
+  if (!storageOk) throw new Error("storage unavailable");
+  await AnchorStore.write(snapshotOps());
+}
+
+function applyLoaded(data) {
+  const s = emptySettings();
+  const person = (k) => (data.persons.find((e) => e.key === k) || {}).value || {};
+  const p1 = person(1), p2 = person(2);
+  s.safeName = p1.name || ""; s.safePhone = p1.phone || ""; s.safeSms = p1.sms || "";
+  s.safeName2 = p2.name || ""; s.safePhone2 = p2.phone || ""; s.safeSms2 = p2.sms || "";
+  const words = (data.words.find((e) => e.key === "words") || {}).value || {};
+  s.proud = words.proud || ""; s.goal = words.goal || ""; s.childhood = words.childhood || "";
+  s.safeSpace = words.safeSpace || ""; s.kindness = words.kindness || "";
+  s.autoWords = !!words.autoWords;
+  const prefs = (data.techniques.find((e) => e.key === "prefs") || {}).value || {};
+  s.techniques = Array.isArray(prefs.techniques) ? prefs.techniques : [];
+  s.musicMode = prefs.musicMode === "tone" ? "tone" : "playlist";
+  s.songs = data.songs
+    .slice().sort((a, b) => a.key - b.key)
+    .map((e) => e.value)
+    .filter((v) => v && (v.kind === "file" ? v.blob instanceof Blob : !!v.url));
+  settings = s;
+  voiceNotes[1] = null; voiceNotes[2] = null;
+  data.voice.forEach((e) => { if (e.value instanceof Blob && (e.key === 1 || e.key === 2)) voiceNotes[e.key] = e.value; });
+}
+
+async function loadAll() {
+  const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques"]);
+  applyLoaded(data);
+}
+
+async function loadLog() {
+  if (!storageOk) return [];
+  try {
+    const rows = await AnchorStore.readAll(["log"]);
+    return rows.log.map((e) => Number(e.value)).filter(Boolean).sort((a, b) => a - b);
+  } catch { return []; }
+}
+async function appendLog(ts) { if (storageOk) await AnchorStore.set("log", ts, ts); }
+async function clearLog() { if (storageOk) await AnchorStore.clear("log"); }
+
+/* ---------- one-time migration: localStorage → IndexedDB ---------- */
+
+function dataURLToBlob(dataURL) {
+  try {
+    const comma = dataURL.indexOf(",");
+    const meta = dataURL.slice(5, comma);            // "audio/webm;base64"
+    const type = meta.split(";")[0] || "application/octet-stream";
+    const b64 = dataURL.slice(comma + 1);
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type });
+  } catch { return null; }
+}
+
+async function migrateFromLocalStorage() {
+  let rawSettings = null, rawLog = null;
+  try {
+    rawSettings = localStorage.getItem(LEGACY_SETTINGS_KEY);
+    rawLog = localStorage.getItem(LEGACY_LOG_KEY);
+  } catch { return; }
+  if (!rawSettings && !rawLog) return;
+
+  let old = null, oldLog = [];
+  try { old = JSON.parse(rawSettings); } catch {}
+  try { oldLog = JSON.parse(rawLog) || []; } catch {}
+
+  // only fill IndexedDB if it's still empty — never clobber a newer plan
+  const existing = await AnchorStore.readAll(["persons", "words", "techniques", "voice", "songs"]);
+  const idbEmpty = Object.values(existing).every((rows) => rows.length === 0);
+
+  const ops = [];
+  if (old && idbEmpty) {
+    // v1 shape: single technique string, single playlist link
+    let techniques = old.techniques;
+    if (!techniques) {
+      const map = { breathing: ["extended"], grounding: ["54321"], both: ["extended", "54321"] };
+      techniques = map[old.technique] || [];
+    }
+    const songs = old.songs || (old.playlist ? [old.playlist] : []);
+    ops.push(
+      { store: "persons", op: "put", key: 1, value: { name: old.safeName || "", phone: old.safePhone || "", sms: "" } },
+      { store: "persons", op: "put", key: 2, value: { name: old.safeName2 || "", phone: old.safePhone2 || "", sms: "" } },
+      { store: "words", op: "put", key: "words", value: {
+        proud: old.proud || "", goal: old.goal || "", childhood: old.childhood || "",
+        safeSpace: old.safeSpace || "", kindness: old.kindness || "", autoWords: !!old.autoWords,
+      } },
+      { store: "techniques", op: "put", key: "prefs", value: { techniques, musicMode: old.musicMode || "playlist" } },
+    );
+    songs.forEach((url, i) => { if (url) ops.push({ store: "songs", op: "put", key: i, value: { kind: "link", url } }); });
+    [["voiceNote", 1], ["voiceNote2", 2]].forEach(([field, slot]) => {
+      if (typeof old[field] === "string" && old[field].startsWith("data:")) {
+        const blob = dataURLToBlob(old[field]);
+        if (blob) ops.push({ store: "voice", op: "put", key: slot, value: blob });
+      }
+    });
+  }
+  if (Array.isArray(oldLog)) {
+    oldLog.forEach((ts) => { const n = Number(ts); if (n) ops.push({ store: "log", op: "put", key: n, value: n }); });
+  }
+  ops.push({ store: "meta", op: "put", key: "migratedAt", value: Date.now() });
+
+  await AnchorStore.write(ops);   // throws → localStorage is left intact, we retry next launch
+  try {
+    localStorage.removeItem(LEGACY_SETTINGS_KEY);
+    localStorage.removeItem(LEGACY_LOG_KEY);
+    localStorage.removeItem(LEGACY_LAST_SEEN_KEY);
+  } catch {}
+  console.log("[Anchor] migrated localStorage → IndexedDB");
 }
 
 /* ---------- screen router ---------- */
@@ -191,17 +285,33 @@ function setTechniques(list) {
   });
 }
 
-/* ---------- songs list ---------- */
+/* ---------- songs list: links + uploaded files ---------- */
 
-function addSongRow(value) {
+const MAX_SONG_BYTES = 40 * 1024 * 1024;
+
+function songStatus(msg) { $("song-status").textContent = msg || ""; }
+
+function addSongRow(song) {
   const row = document.createElement("div");
   row.className = "song-row";
-  const input = document.createElement("input");
-  input.type = "url";
-  input.inputMode = "url";
-  input.autocomplete = "off";
-  input.placeholder = "https://… (Spotify, Apple Music, YouTube song link)";
-  input.value = value || "";
+  row._song = song;
+  if (song.kind === "file") {
+    const name = document.createElement("span");
+    name.className = "song-file-name";
+    name.textContent = song.name || "song";
+    const size = document.createElement("small");
+    size.textContent = song.blob ? `${(song.blob.size / (1024 * 1024)).toFixed(1)} MB` : "";
+    name.appendChild(size);
+    row.appendChild(name);
+  } else {
+    const input = document.createElement("input");
+    input.type = "url";
+    input.inputMode = "url";
+    input.autocomplete = "off";
+    input.placeholder = "https://… (Spotify, Apple Music, YouTube song link)";
+    input.value = song.url || "";
+    row.appendChild(input);
+  }
   const rm = document.createElement("button");
   rm.type = "button";
   rm.className = "song-remove";
@@ -209,34 +319,58 @@ function addSongRow(value) {
   rm.textContent = "×";
   rm.addEventListener("click", () => {
     row.remove();
-    if (!$("songs-list").children.length) addSongRow("");
+    if (!$("songs-list").children.length) addSongRow({ kind: "link", url: "" });
   });
-  row.append(input, rm);
+  row.appendChild(rm);
   $("songs-list").appendChild(row);
 }
 
 function renderSongs(songs) {
   $("songs-list").innerHTML = "";
-  (songs && songs.length ? songs : [""]).forEach(addSongRow);
+  songStatus("");
+  (songs && songs.length ? songs : [{ kind: "link", url: "" }]).forEach(addSongRow);
 }
 
 function collectSongs() {
-  return [...$("songs-list").querySelectorAll("input")]
-    .map((i) => i.value.trim())
-    .filter(Boolean);
+  const out = [];
+  $("songs-list").querySelectorAll(".song-row").forEach((row) => {
+    const song = row._song;
+    if (song.kind === "file") {
+      if (song.blob) out.push(song);
+    } else {
+      const url = (row.querySelector("input") || {}).value || "";
+      if (url.trim()) out.push({ kind: "link", url: url.trim() });
+    }
+  });
+  return out;
 }
 
-$("song-add").addEventListener("click", () => addSongRow(""));
+$("song-add").addEventListener("click", () => addSongRow({ kind: "link", url: "" }));
+$("song-upload").addEventListener("click", () => $("song-file").click());
+$("song-file").addEventListener("change", () => {
+  const file = $("song-file").files[0];
+  $("song-file").value = "";
+  if (!file) return;
+  if (file.size > MAX_SONG_BYTES) {
+    songStatus("That file is very large — something under 40 MB fits best.");
+    return;
+  }
+  // drop the lone empty link row so the file doesn't sit under a blank
+  const rows = [...$("songs-list").querySelectorAll(".song-row")];
+  if (rows.length === 1 && rows[0]._song.kind === "link" && !rows[0].querySelector("input").value.trim()) rows[0].remove();
+  addSongRow({ kind: "file", name: file.name, type: file.type || "audio/mpeg", blob: file });
+  songStatus("Song kept on this phone — it plays right inside Anchor, even offline.");
+});
 
-/* ---------- voice notes ---------- */
+/* ---------- voice notes (Blobs) ---------- */
 
-const voiceNotes = { 1: null, 2: null };
 let recorder = null;
 let recorderSlot = null;
 let recorderTimer = null;
 let previewAudio = null;
-// localStorage holds ~5 MB total; leave room for everything else
-const MAX_VOICE_CHARS = 3_500_000;
+let previewURL = null;
+const MAX_VOICE_BYTES = 25 * 1024 * 1024;
+const MAX_RECORD_MS = 90 * 1000;
 
 function voiceStatus(slot, msg) { $(`voice-status-${slot}`).textContent = msg || ""; }
 
@@ -247,18 +381,19 @@ function syncVoiceUI(slot) {
   if (has) voiceStatus(slot, "Voice note kept on this phone.");
 }
 
-function setVoiceNote(slot, dataURL) {
-  if (dataURL && dataURL.length > MAX_VOICE_CHARS) {
-    voiceStatus(slot, "That note is a little too long to store here — try one under a minute.");
+function setVoiceNote(slot, blob) {
+  if (blob && blob.size > MAX_VOICE_BYTES) {
+    voiceStatus(slot, "That note is a little too big to keep here — try one under a couple of minutes.");
     return;
   }
-  voiceNotes[slot] = dataURL || null;
-  if (!dataURL) voiceStatus(slot, "");
+  voiceNotes[slot] = blob || null;
+  if (!blob) voiceStatus(slot, "");
   syncVoiceUI(slot);
 }
 
 function stopPreview() {
-  if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+  if (previewAudio) { previewAudio.pause(); previewAudio.src = ""; previewAudio = null; }
+  if (previewURL) { URL.revokeObjectURL(previewURL); previewURL = null; }
   [1, 2].forEach((n) => { $(`voice-play-${n}`).textContent = "▶ Play"; });
 }
 
@@ -266,6 +401,10 @@ async function toggleRecord(slot) {
   const btn = $(`voice-rec-${slot}`);
   if (recorder && recorder.state === "recording") {
     if (recorderSlot === slot) recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    voiceStatus(slot, "Recording isn’t available here — uploading a file works too.");
     return;
   }
   let stream;
@@ -284,12 +423,10 @@ async function toggleRecord(slot) {
     stream.getTracks().forEach((t) => t.stop());
     btn.textContent = "● Record";
     btn.classList.remove("recording");
-    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    const type = recorder.mimeType || (chunks[0] && chunks[0].type) || "audio/webm";
     recorder = null;
     recorderSlot = null;
-    const reader = new FileReader();
-    reader.onload = () => setVoiceNote(slot, reader.result);
-    reader.readAsDataURL(blob);
+    setVoiceNote(slot, new Blob(chunks, { type }));
   };
   recorder.start();
   btn.textContent = "■ Stop";
@@ -297,7 +434,7 @@ async function toggleRecord(slot) {
   voiceStatus(slot, "Recording… tap stop when you’re done.");
   recorderTimer = setTimeout(() => {
     if (recorder && recorder.state === "recording") recorder.stop();
-  }, 60000);
+  }, MAX_RECORD_MS);
 }
 
 [1, 2].forEach((slot) => {
@@ -305,20 +442,15 @@ async function toggleRecord(slot) {
   $(`voice-up-${slot}`).addEventListener("click", () => $(`voice-file-${slot}`).click());
   $(`voice-file-${slot}`).addEventListener("change", () => {
     const file = $(`voice-file-${slot}`).files[0];
-    if (!file) return;
-    if (file.size > MAX_VOICE_CHARS * 0.7) {
-      voiceStatus(slot, "That file is a bit large — a short clip under ~2 MB fits best.");
-    } else {
-      const reader = new FileReader();
-      reader.onload = () => setVoiceNote(slot, reader.result);
-      reader.readAsDataURL(file);
-    }
     $(`voice-file-${slot}`).value = "";
+    if (!file) return;
+    setVoiceNote(slot, file);
   });
   $(`voice-play-${slot}`).addEventListener("click", () => {
     if (previewAudio) { stopPreview(); return; }
     if (!voiceNotes[slot]) return;
-    previewAudio = new Audio(voiceNotes[slot]);
+    previewURL = URL.createObjectURL(voiceNotes[slot]);
+    previewAudio = new Audio(previewURL);
     previewAudio.addEventListener("ended", stopPreview);
     previewAudio.play().catch(() => {});
     $(`voice-play-${slot}`).textContent = "■ Stop";
@@ -350,37 +482,45 @@ $("toggle-autowords").addEventListener("click", () => {
 
 /* ---------- setup screen ---------- */
 
-function openSetup(asSettings) {
-  const s = settings || {};
-  $("in-safe-name").value = s.safeName || "";
-  $("in-safe-phone").value = s.safePhone || "";
-  $("in-safe-name2").value = s.safeName2 || "";
-  $("in-safe-phone2").value = s.safePhone2 || "";
-  $("in-proud").value = s.proud || "";
-  $("in-goal").value = s.goal || "";
-  $("in-childhood").value = s.childhood || "";
-  $("in-safespace").value = s.safeSpace || "";
-  $("in-kindness").value = s.kindness || "";
+function fillSetupForm() {
+  const s = settings;
+  $("in-safe-name").value = s.safeName;
+  $("in-safe-phone").value = s.safePhone;
+  $("in-safe-sms").value = s.safeSms;
+  $("in-safe-name2").value = s.safeName2;
+  $("in-safe-phone2").value = s.safePhone2;
+  $("in-safe-sms2").value = s.safeSms2;
+  $("in-proud").value = s.proud;
+  $("in-goal").value = s.goal;
+  $("in-childhood").value = s.childhood;
+  $("in-safespace").value = s.safeSpace;
+  $("in-kindness").value = s.kindness;
   setTechniques(s.techniques);
   renderSongs(s.songs);
   selectChoice("music", s.musicMode || "playlist");
 
   stopPreview();
-  voiceNotes[1] = s.voiceNote || null;
-  voiceNotes[2] = s.voiceNote2 || null;
   voiceStatus(1, ""); voiceStatus(2, "");
   syncVoiceUI(1); syncVoiceUI(2);
 
-  const hasP2 = !!(s.safeName2 || s.safePhone2 || s.voiceNote2);
+  const hasP2 = !!(s.safeName2 || s.safePhone2 || s.safeSms2 || voiceNotes[2]);
   $("person2-fields").classList.toggle("hidden", !hasP2);
   $("person-add").classList.toggle("hidden", hasP2);
 
   autoWords = !!s.autoWords;
   syncAutoWords();
   $("save-note").classList.add("hidden");
+}
+
+async function openSetup(asSettings) {
+  await dataReady;
+  fillSetupForm();
 
   $("setup-back").classList.remove("hidden");
   $("log-group").classList.toggle("hidden", !asSettings);
+  $("backup-group").classList.toggle("hidden", !(asSettings && AnchorBackup.available() && storageOk));
+  $("backup-pass").value = "";
+  $("backup-status").textContent = "";
   $("setup-title").textContent = asSettings ? "Your anchor" : "Let’s set up your anchor";
   $("setup-sub").textContent = asSettings
     ? "Update anything, any time. It all stays on this phone."
@@ -391,15 +531,14 @@ function openSetup(asSettings) {
   $("screen-setup").scrollTop = 0;
 }
 
-$("setup-save").addEventListener("click", () => {
-  stopPreview();
-  settings = {
+function readSetupForm() {
+  return {
     safeName: $("in-safe-name").value.trim(),
     safePhone: $("in-safe-phone").value.trim(),
+    safeSms: $("in-safe-sms").value.trim(),
     safeName2: $("in-safe-name2").value.trim(),
     safePhone2: $("in-safe-phone2").value.trim(),
-    voiceNote: voiceNotes[1],
-    voiceNote2: voiceNotes[2],
+    safeSms2: $("in-safe-sms2").value.trim(),
     techniques: [...techniqueSet],
     musicMode: choiceState.music,
     songs: collectSongs(),
@@ -410,28 +549,42 @@ $("setup-save").addEventListener("click", () => {
     safeSpace: $("in-safespace").value.trim(),
     kindness: $("in-kindness").value.trim(),
   };
+}
+
+let saving = false;
+$("setup-save").addEventListener("click", async () => {
+  if (saving) return;
+  saving = true;
+  const btn = $("setup-save");
+  const note = $("save-note");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  stopPreview();
+  settings = readSetupForm();
   try {
-    saveSettings(settings);
-  } catch {
-    // almost certainly the voice notes blowing the localStorage quota
-    settings = { ...settings, voiceNote: null, voiceNote2: null };
-    try { saveSettings(settings); } catch {}
-    voiceNotes[1] = voiceNotes[2] = null;
-    syncVoiceUI(1); syncVoiceUI(2);
-    const note = $("save-note");
-    note.textContent = "The voice note was too big to keep in this phone’s storage, so everything else was saved without it. A shorter note will fit.";
+    await persistSettings();
+    note.classList.add("hidden");
+    show("screen-home");
+  } catch (err) {
+    console.warn("[Anchor] save failed", err);
+    note.textContent = storageOk
+      ? "Couldn’t write to this phone’s storage just now. Your anchor is still here on screen — try saving again in a moment."
+      : "This browser won’t let Anchor keep data between visits (private mode?). Your anchor will work until you close the app.";
     note.classList.remove("hidden");
-    return; // stay here so the note is seen
+    if (!storageOk) show("screen-home");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save my anchor";
+    saving = false;
   }
-  show("screen-home");
 });
 
-$("setup-back").addEventListener("click", () => show("screen-home"));
+$("setup-back").addEventListener("click", () => { stopPreview(); show("screen-home"); });
 
 /* ---------- log ---------- */
 
-function renderLog() {
-  const entries = loadLog();
+async function renderLog() {
+  const entries = await loadLog();
   const list = $("log-list");
   list.innerHTML = "";
   $("log-summary").textContent = entries.length
@@ -448,18 +601,142 @@ function renderLog() {
   $("log-clear").classList.toggle("hidden", entries.length === 0);
 }
 
-$("log-clear").addEventListener("click", () => {
-  saveLog([]);
+$("log-clear").addEventListener("click", async () => {
+  await clearLog();
   renderLog();
 });
 
+/* ---------- encrypted backup ---------- */
+
+function backupStatus(msg) { $("backup-status").textContent = msg || ""; }
+
+async function buildBackupPayload() {
+  const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques", "log"]);
+  const plain = (rows) => rows.map((e) => ({ key: e.key, value: e.value }));
+  const voice = [];
+  for (const e of data.voice) {
+    if (e.value instanceof Blob) voice.push({ key: e.key, value: await AnchorBackup.blobToRecord(e.value) });
+  }
+  const songs = [];
+  for (const e of data.songs) {
+    const v = e.value || {};
+    if (v.kind === "file" && v.blob instanceof Blob) {
+      songs.push({ key: e.key, value: { kind: "file", name: v.name, type: v.type, file: await AnchorBackup.blobToRecord(v.blob) } });
+    } else if (v.url) {
+      songs.push({ key: e.key, value: { kind: "link", url: v.url } });
+    }
+  }
+  return {
+    app: "anchor", version: 1, exportedAt: new Date().toISOString(),
+    persons: plain(data.persons), words: plain(data.words), techniques: plain(data.techniques),
+    log: plain(data.log), voice, songs,
+  };
+}
+
+function payloadToOps(p) {
+  if (!p || p.app !== "anchor") throw new Error("not-a-backup");
+  const ops = AnchorStore.STORES.filter((s) => s !== "meta").map((s) => ({ store: s, op: "clear" }));
+  (p.persons || []).forEach((e) => ops.push({ store: "persons", op: "put", key: e.key, value: e.value }));
+  (p.words || []).forEach((e) => ops.push({ store: "words", op: "put", key: e.key, value: e.value }));
+  (p.techniques || []).forEach((e) => ops.push({ store: "techniques", op: "put", key: e.key, value: e.value }));
+  (p.log || []).forEach((e) => { const n = Number(e.value); if (n) ops.push({ store: "log", op: "put", key: n, value: n }); });
+  (p.voice || []).forEach((e) => {
+    const blob = AnchorBackup.recordToBlob(e.value);
+    if (blob) ops.push({ store: "voice", op: "put", key: e.key, value: blob });
+  });
+  (p.songs || []).forEach((e) => {
+    const v = e.value || {};
+    if (v.kind === "file") {
+      const blob = AnchorBackup.recordToBlob(v.file);
+      if (blob) ops.push({ store: "songs", op: "put", key: e.key, value: { kind: "file", name: v.name, type: v.type, blob } });
+    } else if (v.url) {
+      ops.push({ store: "songs", op: "put", key: e.key, value: { kind: "link", url: v.url } });
+    }
+  });
+  ops.push({ store: "meta", op: "put", key: "importedAt", value: Date.now() });
+  return ops;
+}
+
+function passphraseOrNudge() {
+  const pass = $("backup-pass").value;
+  if (pass.length < 6) {
+    backupStatus("Choose a passphrase of at least 6 characters first — it’s the only key to this file.");
+    $("backup-pass").focus();
+    return null;
+  }
+  return pass;
+}
+
+async function handToUser(blob, name) {
+  const file = new File([blob], name, { type: "application/octet-stream" });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Anchor backup" }); return "shared"; }
+    catch (err) { if (err && err.name === "AbortError") return "cancelled"; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return "downloaded";
+}
+
+$("backup-export").addEventListener("click", async () => {
+  const pass = passphraseOrNudge();
+  if (!pass) return;
+  backupStatus("Sealing your backup…");
+  try {
+    const payload = await buildBackupPayload();
+    const blob = await AnchorBackup.encrypt(payload, pass);
+    const result = await handToUser(blob, AnchorBackup.fileName());
+    backupStatus(result === "cancelled"
+      ? "No file was saved."
+      : "Backup file ready. Keep it somewhere safe, and remember the passphrase — nobody can recover it for you.");
+  } catch (err) {
+    console.warn("[Anchor] export failed", err);
+    backupStatus("Couldn’t create the backup just now. Nothing was changed.");
+  }
+});
+
+$("backup-import").addEventListener("click", () => {
+  if (!passphraseOrNudge()) return;
+  $("backup-file").click();
+});
+
+$("backup-file").addEventListener("change", async () => {
+  const file = $("backup-file").files[0];
+  $("backup-file").value = "";
+  if (!file) return;
+  const pass = $("backup-pass").value;
+  backupStatus("Unlocking your backup…");
+  try {
+    const payload = await AnchorBackup.decrypt(await file.arrayBuffer(), pass);
+    await AnchorStore.write(payloadToOps(payload));
+    await loadAll();
+    fillSetupForm();
+    renderLog();
+    backupStatus("Restored. Everything from that backup is back on this phone.");
+  } catch (err) {
+    const why = err && err.message;
+    backupStatus(why === "wrong-passphrase"
+      ? "That passphrase doesn’t open this file."
+      : why === "not-a-backup" || why === "unknown-version"
+        ? "That doesn’t look like an Anchor backup file."
+        : "Couldn’t restore from that file. Nothing was changed.");
+  }
+});
+
 /* ============================================================
-   HOME
+   HOME — panic always starts instantly, from the very first launch;
+   personalization is layered on behind the scenes if it exists
    ============================================================ */
 
-/* two permanent buttons: panic always starts instantly (personalized behind
-   the scenes when setup exists); all setup/editing routes through the other */
-$("btn-panic").addEventListener("click", () => startPanic(hasSetup()));
+$("btn-panic").addEventListener("click", () => {
+  unlockAudio();          // synchronously, inside the tap — iOS needs this
+  startPanic();
+});
 $("btn-secondary").addEventListener("click", () => openSetup(hasSetup()));
 
 /* ============================================================
@@ -541,6 +818,7 @@ function drawParticles(elapsed) {
 
 /* ============================================================
    AUDIO — breath tone swells with inhale, fades with exhale.
+   Everything here is best-effort: the pacer never waits on audio.
    (No Vibration API: not supported on iOS Safari.)
    ============================================================ */
 
@@ -552,31 +830,46 @@ function ensureAudio() {
   if (!audioCtx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return false;
-    audioCtx = new AC();
+    try { audioCtx = new AC(); } catch { return false; }
   }
-  if (audioCtx.state === "suspended") audioCtx.resume();
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
   return true;
+}
+
+/* Called synchronously inside the panic-button tap: creates/resumes the
+   context and plays one silent buffer so iOS treats audio as unlocked. */
+function unlockAudio() {
+  if (!ensureAudio()) return;
+  try {
+    const buf = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start(0);
+  } catch {}
 }
 
 function startBreathTone() {
   if (!ensureAudio()) return;
   stopBreathTone();
-  breathGain = audioCtx.createGain();
-  breathGain.gain.value = 0;
-  breathGain.connect(audioCtx.destination);
+  try {
+    breathGain = audioCtx.createGain();
+    breathGain.gain.value = 0;
+    breathGain.connect(audioCtx.destination);
 
-  // low, soft dyad — a hum, not a beep
-  [110, 165].forEach((freq, i) => {
-    const osc = audioCtx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = freq;
-    const g = audioCtx.createGain();
-    g.gain.value = i === 0 ? 1 : 0.35;
-    osc.connect(g).connect(breathGain);
-    osc.start();
-    breathGain._oscs = breathGain._oscs || [];
-    breathGain._oscs.push(osc);
-  });
+    // low, soft dyad — a hum, not a beep
+    [110, 165].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const g = audioCtx.createGain();
+      g.gain.value = i === 0 ? 1 : 0.35;
+      osc.connect(g).connect(breathGain);
+      osc.start();
+      breathGain._oscs = breathGain._oscs || [];
+      breathGain._oscs.push(osc);
+    });
+  } catch { breathGain = null; }
 }
 
 function updateBreathTone(b) {
@@ -596,7 +889,7 @@ function stopBreathTone() {
   }, 800);
 }
 
-/* built-in ambient pad for "calming music" when no songs saved */
+/* built-in ambient pad for "calming sounds" when no songs saved */
 function startAmbient() {
   if (!ensureAudio()) return;
   stopAmbient();
@@ -887,6 +1180,7 @@ const GUIDES = {
   tipp: {
     chip: "Cold water reset",
     stepMs: 16000,
+    caution: "Nicht geeignet bei Herzerkrankungen oder Herzrhythmusstörungen — im Zweifel eine andere Technik wählen.",
     steps: [
       "Cold can reset your nervous system fast.\nIf you can, move toward a sink.",
       "Splash cold water on your face —\nor run it over the inside of your wrists.",
@@ -904,6 +1198,9 @@ let guideTimer = null;
 function renderGuideStep() {
   const guide = GUIDES[activeGuide];
   $("guide-step").textContent = guide.steps[guideIdx];
+  const caution = $("guide-caution");
+  caution.textContent = guide.caution || "";
+  caution.classList.toggle("hidden", !guide.caution);
   const dots = $("guide-dots");
   dots.innerHTML = "";
   for (let i = 0; i < guide.steps.length - 1; i++) {
@@ -912,6 +1209,7 @@ function renderGuideStep() {
     dots.appendChild(d);
   }
   $("guide-card").classList.remove("hidden");
+  $("screen-panic").classList.add("guide-on");
 }
 
 function advanceGuide() {
@@ -938,6 +1236,7 @@ function stopGuide() {
   activeGuide = null;
   guideIdx = -1;
   $("guide-card").classList.add("hidden");
+  $("screen-panic").classList.remove("guide-on");
   syncChips();
 }
 
@@ -978,10 +1277,12 @@ function addExtraChip(kind, label, onClick) {
 /* ---------- safe-person voice, on repeat ---------- */
 
 let voiceLoop = null;
+let voiceLoopURL = null;
 
-function startVoiceLoop(url) {
+function startVoiceLoop(blob) {
   stopVoiceLoop();
-  voiceLoop = new Audio(url);
+  voiceLoopURL = URL.createObjectURL(blob);
+  voiceLoop = new Audio(voiceLoopURL);
   voiceLoop.loop = true;
   voiceLoop.play().catch(() => {});
   const chip = document.querySelector('#chip-row .chip[data-extra="voice"]');
@@ -989,9 +1290,28 @@ function startVoiceLoop(url) {
 }
 
 function stopVoiceLoop() {
-  if (voiceLoop) { voiceLoop.pause(); voiceLoop = null; }
+  if (voiceLoop) { voiceLoop.pause(); voiceLoop.src = ""; voiceLoop = null; }
+  if (voiceLoopURL) { URL.revokeObjectURL(voiceLoopURL); voiceLoopURL = null; }
   const chip = document.querySelector('#chip-row .chip[data-extra="voice"]');
   if (chip) chip.classList.remove("active");
+}
+
+/* ---------- their own song files, played right here ---------- */
+
+let songAudio = null;
+let songURL = null;
+
+function stopSongAudio() {
+  if (songAudio) { songAudio.pause(); songAudio.src = ""; songAudio = null; }
+  if (songURL) { URL.revokeObjectURL(songURL); songURL = null; }
+}
+
+function playSongBlob(song, onEnded) {
+  stopSongAudio();
+  songURL = URL.createObjectURL(song.blob);
+  songAudio = new Audio(songURL);
+  songAudio.addEventListener("ended", () => { stopSongAudio(); if (onEnded) onEnded(); });
+  songAudio.play().catch(() => {});
 }
 
 /* ============================================================
@@ -1002,11 +1322,30 @@ const BREATHING_TECHNIQUES = ["box", "extended", "armraise"];
 let wakeLock = null;
 let songIdx = 0;
 let sessionSongs = [];
+let panicActive = false;
+let panicPersonalized = false;
 
 async function requestWakeLock() {
   try {
     if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
   } catch {}
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && panicActive && !wakeLock) requestWakeLock();
+});
+
+function cleanPhone(p) { return String(p || "").replace(/[^\d+]/g, ""); }
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+/* iOS wants  sms:NUMBER&body=…   Android wants  sms:NUMBER?body=… */
+function smsHref(phone, body) {
+  const sep = isIOS() ? "&" : "?";
+  return `sms:${cleanPhone(phone)}${sep}body=${encodeURIComponent(body || DEFAULT_SMS)}`;
 }
 
 function panicLoop(now) {
@@ -1024,13 +1363,40 @@ function panicLoop(now) {
   rafId = requestAnimationFrame(panicLoop);
 }
 
-function startPanic(personalized) {
-  show("screen-panic");
-  sizeCanvas();
-  makeParticles();
+/* keep the affirmation floating just above whatever the bottom stack measures */
+function syncBottomHeight() {
+  const h = $("panic-bottom").offsetHeight;
+  if (h) document.documentElement.style.setProperty("--panic-bottom", `${h}px`);
+}
+if (window.ResizeObserver) new ResizeObserver(syncBottomHeight).observe($("panic-bottom"));
 
-  const s = personalized ? settings : {};
-  const techniques = (s.techniques || []);
+function showCallFallback(calledSlot) {
+  const s = settings;
+  const fb = $("call-fallback");
+  let any = false;
+  [[1, s.safePhone, s.safeName, s.safeSms], [2, s.safePhone2, s.safeName2, s.safeSms2]].forEach(([slot, phone, name, sms]) => {
+    const a = $(slot === 1 ? "btn-sms" : "btn-sms2");
+    if (!phone) { a.classList.add("hidden"); return; }
+    a.href = smsHref(phone, sms);
+    $(slot === 1 ? "sms-label" : "sms-label2").textContent = name ? `Text ${name}` : (slot === 1 ? "Text them" : "Text my second person");
+    a.classList.remove("hidden");
+    any = true;
+  });
+  fb.classList.toggle("hidden", !any);
+  // the other person is the immediate alternative — make sure it reads as one
+  const other = $(calledSlot === 1 ? "btn-call2" : "btn-call");
+  if (!other.classList.contains("hidden")) other.classList.add("pulse");
+  syncBottomHeight();
+}
+
+$("btn-call").addEventListener("click", () => showCallFallback(1));
+$("btn-call2").addEventListener("click", () => showCallFallback(2));
+
+/* Layer the user's plan onto a running panic screen. Safe to call more
+   than once; safe to call with an empty plan. */
+function applyPersonalization() {
+  const s = settings;
+  const techniques = s.techniques || [];
 
   // breathing style: use what they chose; extended-exhale is the calm default
   if (techniques.includes("armraise")) setPattern("armraise");
@@ -1042,52 +1408,46 @@ function startPanic(personalized) {
   if (!guideIds.length) guideIds = ["54321"];
   buildChips(guideIds);
 
-  // their person's voice, looping alongside the pacer
-  const voiceUrl = s.voiceNote || s.voiceNote2;
-  if (techniques.includes("voice") && voiceUrl) {
-    const whose = s.voiceNote ? s.safeName : s.safeName2;
+  // their person's voice, looping alongside the pacer — only if one exists
+  const voiceBlob = voiceNotes[1] || voiceNotes[2];
+  if (techniques.includes("voice") && voiceBlob) {
+    const whose = voiceNotes[1] ? s.safeName : s.safeName2;
     addExtraChip("voice", whose ? `${whose}’s voice` : "Their voice", () => {
       if (voiceLoop) stopVoiceLoop();
-      else startVoiceLoop(voiceUrl);
+      else startVoiceLoop(voiceBlob);
     });
-    startVoiceLoop(voiceUrl);
+    startVoiceLoop(voiceBlob);
   }
 
-  // their calming song, one tap away
-  const panicSongs = (s.songs && s.songs.length) ? s.songs : [];
-  if (techniques.includes("song") && panicSongs.length) {
-    addExtraChip("song", "♫ My calming song", () => {
-      let url = panicSongs[songIdx % panicSongs.length];
-      songIdx++;
-      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
-      window.open(url, "_blank", "noopener");
-    });
+  // songs: files play here, links open in their app
+  sessionSongs = (s.musicMode === "playlist" && s.songs.length) ? s.songs : [];
+  songIdx = 0;
+  $("music-label").textContent = sessionSongs.length ? "Play my calming music" : "Play calming sounds";
+  if (techniques.includes("song") && sessionSongs.length) {
+    addExtraChip("song", "♫ My calming song", playNextSong);
   }
 
-  // call buttons
-  $("call-label").textContent = s.safeName ? `Call ${s.safeName}` : "Call someone";
+  // call buttons — hidden entirely when there's nobody to call
   const callBtn = $("btn-call");
   if (s.safePhone) {
-    callBtn.href = "tel:" + s.safePhone.replace(/[^\d+]/g, "");
-    callBtn.style.display = "";
+    $("call-label").textContent = s.safeName ? `Call ${s.safeName}` : "Call my person";
+    callBtn.href = "tel:" + cleanPhone(s.safePhone);
+    callBtn.classList.remove("hidden");
   } else {
-    callBtn.style.display = "none";
+    callBtn.classList.add("hidden");
   }
   const callBtn2 = $("btn-call2");
   if (s.safePhone2) {
     $("call-label2").textContent = s.safeName2 ? `Call ${s.safeName2}` : "Call my second person";
-    callBtn2.href = "tel:" + s.safePhone2.replace(/[^\d+]/g, "");
+    callBtn2.href = "tel:" + cleanPhone(s.safePhone2);
     callBtn2.classList.remove("hidden");
   } else {
     callBtn2.classList.add("hidden");
   }
+  callBtn.classList.remove("pulse"); callBtn2.classList.remove("pulse");
+  $("call-fallback").classList.add("hidden");
 
-  // music button
-  sessionSongs = (s.musicMode === "playlist" && s.songs && s.songs.length) ? s.songs : [];
-  songIdx = 0;
-  $("music-label").textContent = sessionSongs.length ? "Play my calming music" : "Play calming sounds";
-
-  // their words (shown verbatim under a fixed lead-in, alternating with the
+  // their words (verbatim under a fixed lead-in, alternating with the
   // generic arsenal), Anchor's words, or the generic arsenal alone
   const personal = [];
   if (!s.autoWords) {
@@ -1101,25 +1461,64 @@ function startPanic(personalized) {
   if (s.autoWords) feed = loopFeed(shuffled(ANCHOR_WORDS));
   else if (personal.length) feed = alternatingFeed(personal);
   else feed = loopFeed(shuffled(GENERIC_LINES));
-
-  startBreathTone();
+  stopAffirmations();
   startAffirmations(feed);
+
   // if they chose only guided techniques (no breathing style), lead with the first one
-  if (guideIds.length && !techniques.some((t) => BREATHING_TECHNIQUES.includes(t)) &&
+  if (!activeGuide && guideIds.length &&
+      !techniques.some((t) => BREATHING_TECHNIQUES.includes(t)) &&
       techniques.some((t) => GUIDES[t])) {
     startGuide(guideIds[0]);
   }
+  syncBottomHeight();
+}
+
+function startPanic() {
+  panicActive = true;
+  show("screen-panic");
+  sizeCanvas();
+  makeParticles();
+
+  // visuals + tone first, unconditionally — nothing below may delay this
+  panicStart = performance.now();
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(panicLoop);
+  startBreathTone();
   requestWakeLock();
 
-  panicStart = performance.now();
-  rafId = requestAnimationFrame(panicLoop);
+  stopGuide();
+  applyPersonalization();
+  panicPersonalized = dataLoaded;
+}
+
+function playNextSong() {
+  if (!sessionSongs.length) return;
+  const song = sessionSongs[songIdx % sessionSongs.length];
+  songIdx++;
+  if (song.kind === "file" && song.blob) {
+    stopAmbient();
+    playSongBlob(song, () => {
+      // roll straight into the next one so the music doesn't just stop on them
+      if (panicActive && sessionSongs.length > 1) playNextSong();
+      else $("music-label").textContent = "Play my calming music";
+    });
+    $("music-label").textContent = sessionSongs.length > 1 ? "Next song" : "Playing your song";
+  } else {
+    let url = song.url;
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    window.open(url, "_blank", "noopener");
+    if (sessionSongs.length > 1) $("music-label").textContent = "Next song";
+  }
 }
 
 function endPanic(toAfterScreen) {
+  panicActive = false;
+  panicPersonalized = false;
   cancelAnimationFrame(rafId);
   rafId = null;
   stopBreathTone();
   stopAmbient();
+  stopSongAudio();
   stopAffirmations();
   stopGuide();
   stopVoiceLoop();
@@ -1131,11 +1530,7 @@ $("btn-better").addEventListener("click", () => endPanic(true));
 
 $("btn-music").addEventListener("click", () => {
   if (sessionSongs.length) {
-    let url = sessionSongs[songIdx % sessionSongs.length];
-    songIdx++;
-    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
-    window.open(url, "_blank", "noopener");
-    if (sessionSongs.length > 1) $("music-label").textContent = "Next song";
+    playNextSong();
   } else {
     if (ambient) {
       stopAmbient();
@@ -1149,21 +1544,21 @@ $("btn-music").addEventListener("click", () => {
 
 window.addEventListener("resize", () => {
   if (rafId) sizeCanvas();
+  syncBottomHeight();
 });
 
 /* ============================================================
    AFTER / LOG
    ============================================================ */
 
-$("btn-log").addEventListener("click", () => {
-  const entries = loadLog();
-  entries.push(Date.now());
-  saveLog(entries);
-  $("btn-log").textContent = "Logged ✓";
-  $("btn-log").disabled = true;
+$("btn-log").addEventListener("click", async () => {
+  const btn = $("btn-log");
+  btn.disabled = true;
+  try { await appendLog(Date.now()); } catch {}
+  btn.textContent = "Logged ✓";
   setTimeout(() => {
-    $("btn-log").textContent = "Log this episode";
-    $("btn-log").disabled = false;
+    btn.textContent = "Log this episode";
+    btn.disabled = false;
     show("screen-home");
   }, 900);
 });
@@ -1176,7 +1571,8 @@ $("btn-done").addEventListener("click", () => show("screen-home"));
 
 show("screen-home");
 
-/* opening breath — once per session, tap anywhere to skip */
+/* opening breath — once per session; a tap goes straight through to
+   whatever is underneath, so the panic button works even from here */
 (function playIntro() {
   let played = false;
   try { played = !!sessionStorage.getItem("anchor.introPlayed"); } catch {}
@@ -1188,15 +1584,56 @@ show("screen-home");
   requestAnimationFrame(() => requestAnimationFrame(() => intro.classList.add("in")));
 
   let done = false;
-  const finish = () => {
+  const finish = (instant) => {
     if (done) return;
     done = true;
+    if (instant) { intro.classList.add("hidden"); return; }
     intro.classList.add("out");
     setTimeout(() => intro.classList.add("hidden"), 1100);
   };
-  intro.addEventListener("click", finish);
-  setTimeout(finish, 3400); // fade in, hold, let go
+  intro.addEventListener("click", (e) => {
+    finish(true);
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const panic = under && under.closest && under.closest("#btn-panic");
+    if (panic) panic.click();   // still inside the user's tap → audio unlocks fine
+  });
+  setTimeout(() => finish(false), 3400); // fade in, hold, let go
 })();
+
+/* ask the browser to keep our data — after the first real interaction */
+(function persistOnFirstInteraction() {
+  const once = () => {
+    document.removeEventListener("pointerdown", once, true);
+    document.removeEventListener("keydown", once, true);
+    AnchorStore.requestPersist();
+  };
+  document.addEventListener("pointerdown", once, true);
+  document.addEventListener("keydown", once, true);
+})();
+
+/* load the plan; if the panic screen was opened before this finished,
+   layer the plan on now */
+let dataLoaded = false;
+const dataReady = (async () => {
+  if (!AnchorStore.available()) { storageOk = false; return; }
+  try {
+    await migrateFromLocalStorage();
+  } catch (err) {
+    console.warn("[Anchor] migration deferred", err);
+  }
+  try {
+    await loadAll();
+  } catch (err) {
+    console.warn("[Anchor] storage unavailable — running from memory", err);
+    storageOk = false;
+  }
+})().then(() => {
+  dataLoaded = true;
+  if (panicActive && !panicPersonalized) {
+    applyPersonalization();
+    panicPersonalized = true;
+  }
+});
 
 if ("serviceWorker" in navigator &&
     (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
