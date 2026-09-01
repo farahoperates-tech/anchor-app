@@ -5,7 +5,6 @@
 
 const $ = (id) => document.getElementById(id);
 
-const DEFAULT_SMS = "Ich habe gerade einen schweren Moment. Kannst du mich anrufen? 🖤";
 const LEGACY_SETTINGS_KEY = "anchor.settings";
 const LEGACY_LOG_KEY = "anchor.log";
 const LEGACY_LAST_SEEN_KEY = "anchor.lastSeen";
@@ -22,6 +21,7 @@ function emptySettings() {
     songs: [],            // [{ kind: "link", url } | { kind: "file", name, type, blob }]
     autoWords: false,
     proud: "", goal: "", childhood: "", safeSpace: "", kindness: "",
+    crisisNumber: "",     // region, not language: replaces the default crisis line when set
   };
 }
 
@@ -51,6 +51,8 @@ function snapshotOps() {
       safeSpace: s.safeSpace, kindness: s.kindness, autoWords: !!s.autoWords,
     } },
     { store: "techniques", op: "put", key: "prefs", value: { techniques: [...s.techniques], musicMode: s.musicMode } },
+    { store: "meta", op: "put", key: "crisisNumber", value: s.crisisNumber || "" },
+    { store: "meta", op: "put", key: "lang", value: AnchorI18n.current() },
     { store: "songs", op: "clear" },
   ];
   s.songs.forEach((song, i) => {
@@ -89,13 +91,20 @@ function applyLoaded(data) {
     .slice().sort((a, b) => a.key - b.key)
     .map((e) => e.value)
     .filter((v) => v && (v.kind === "file" ? v.blob instanceof Blob : !!v.url));
+  const meta = (k) => (data.meta.find((e) => e.key === k) || {}).value;
+  s.crisisNumber = meta("crisisNumber") || "";
   settings = s;
   voiceNotes[1] = null; voiceNotes[2] = null;
   data.voice.forEach((e) => { if (e.value instanceof Blob && (e.key === 1 || e.key === 2)) voiceNotes[e.key] = e.value; });
+  // stored language wins over auto-detection (no stored value → detection stays)
+  const storedLang = meta("lang");
+  if (storedLang && AnchorI18n.available().includes(storedLang) && storedLang !== AnchorI18n.current()) {
+    AnchorI18n.setLanguage(storedLang);
+  }
 }
 
 async function loadAll() {
-  const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques"]);
+  const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques", "meta"]);
   applyLoaded(data);
 }
 
@@ -191,25 +200,29 @@ function show(screenId) {
    BREATH PATTERNS
    ============================================================ */
 
+/* phase labels live in the dictionaries: t("techniques.breath.<name>")[i] */
 const PATTERNS = {
   extended: {
+    name: "extended",
     phases: [
-      { label: "Breathe in", dur: 4000, from: 0, to: 1 },
-      { label: "Breathe out… slowly", dur: 8000, from: 1, to: 0 },
+      { dur: 4000, from: 0, to: 1 },
+      { dur: 8000, from: 1, to: 0 },
     ],
   },
   box: {
+    name: "box",
     phases: [
-      { label: "Breathe in", dur: 4000, from: 0, to: 1 },
-      { label: "Hold… gently", dur: 4000, from: 1, to: 1 },
-      { label: "Breathe out", dur: 4000, from: 1, to: 0 },
-      { label: "Rest… empty", dur: 4000, from: 0, to: 0 },
+      { dur: 4000, from: 0, to: 1 },
+      { dur: 4000, from: 1, to: 1 },
+      { dur: 4000, from: 1, to: 0 },
+      { dur: 4000, from: 0, to: 0 },
     ],
   },
   armraise: {
+    name: "armraise",
     phases: [
-      { label: "Raise your arms — breathe in", dur: 4000, from: 0, to: 1 },
-      { label: "Lower them slowly — breathe out", dur: 8000, from: 1, to: 0 },
+      { dur: 4000, from: 0, to: 1 },
+      { dur: 8000, from: 1, to: 0 },
     ],
   },
 };
@@ -226,21 +239,22 @@ function easeInOut(p) { return 0.5 - 0.5 * Math.cos(Math.PI * p); }
 
 /** 0 (fully exhaled) → 1 (fully inhaled) for the active pattern. */
 function breathValue(ms) {
-  let t = ((ms % cycleMs) + cycleMs) % cycleMs;
+  let rem = ((ms % cycleMs) + cycleMs) % cycleMs;
   for (const ph of pattern.phases) {
-    if (t < ph.dur) {
-      return ph.from + (ph.to - ph.from) * easeInOut(t / ph.dur);
+    if (rem < ph.dur) {
+      return ph.from + (ph.to - ph.from) * easeInOut(rem / ph.dur);
     }
-    t -= ph.dur;
+    rem -= ph.dur;
   }
   return 0;
 }
 
 function breathLabel(ms) {
-  let t = ((ms % cycleMs) + cycleMs) % cycleMs;
-  for (const ph of pattern.phases) {
-    if (t < ph.dur) return ph.label;
-    t -= ph.dur;
+  let rem = ((ms % cycleMs) + cycleMs) % cycleMs;
+  const labels = t(`techniques.breath.${pattern.name}`) || [];
+  for (let i = 0; i < pattern.phases.length; i++) {
+    if (rem < pattern.phases[i].dur) return labels[i] || "";
+    rem -= pattern.phases[i].dur;
   }
   return "";
 }
@@ -261,8 +275,19 @@ document.querySelectorAll(".choice:not(.multi)").forEach((btn) => {
     if (group === "music") {
       $("songs-field").classList.toggle("hidden", choiceState.music !== "playlist");
     }
+    if (group === "lang" && btn.dataset.value !== AnchorI18n.current()) {
+      AnchorI18n.setLanguage(btn.dataset.value);          // effective immediately, no reload
+      if (storageOk) AnchorStore.set("meta", "lang", AnchorI18n.current()).catch(() => {});
+    }
   });
 });
+
+/* select a radio-style choice visually without firing its click handler */
+function markChoice(group, value) {
+  choiceState[group] = value;
+  document.querySelectorAll(`.choice[data-group="${group}"]`)
+    .forEach((b) => b.classList.toggle("selected", b.dataset.value === value));
+}
 
 document.querySelectorAll(".choice.multi").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -308,14 +333,16 @@ function addSongRow(song) {
     input.type = "url";
     input.inputMode = "url";
     input.autocomplete = "off";
-    input.placeholder = "https://… (Spotify, Apple Music, YouTube song link)";
+    input.dataset.i18nPh = "setup.sound.songPh";
+    input.placeholder = t("setup.sound.songPh");
     input.value = song.url || "";
     row.appendChild(input);
   }
   const rm = document.createElement("button");
   rm.type = "button";
   rm.className = "song-remove";
-  rm.setAttribute("aria-label", "Remove this song");
+  rm.dataset.i18nAria = "setup.sound.removeSong";
+  rm.setAttribute("aria-label", t("setup.sound.removeSong"));
   rm.textContent = "×";
   rm.addEventListener("click", () => {
     row.remove();
@@ -352,14 +379,14 @@ $("song-file").addEventListener("change", () => {
   $("song-file").value = "";
   if (!file) return;
   if (file.size > MAX_SONG_BYTES) {
-    songStatus("That file is very large — something under 40 MB fits best.");
+    songStatus(t("setup.sound.tooBig"));
     return;
   }
   // drop the lone empty link row so the file doesn't sit under a blank
   const rows = [...$("songs-list").querySelectorAll(".song-row")];
   if (rows.length === 1 && rows[0]._song.kind === "link" && !rows[0].querySelector("input").value.trim()) rows[0].remove();
   addSongRow({ kind: "file", name: file.name, type: file.type || "audio/mpeg", blob: file });
-  songStatus("Song kept on this phone — it plays right inside Anchor, even offline.");
+  songStatus(t("setup.sound.kept"));
 });
 
 /* ---------- voice notes (Blobs) ---------- */
@@ -378,12 +405,12 @@ function syncVoiceUI(slot) {
   const has = !!voiceNotes[slot];
   $(`voice-play-${slot}`).classList.toggle("hidden", !has);
   $(`voice-del-${slot}`).classList.toggle("hidden", !has);
-  if (has) voiceStatus(slot, "Voice note kept on this phone.");
+  if (has) voiceStatus(slot, t("setup.person.kept"));
 }
 
 function setVoiceNote(slot, blob) {
   if (blob && blob.size > MAX_VOICE_BYTES) {
-    voiceStatus(slot, "That note is a little too big to keep here — try one under a couple of minutes.");
+    voiceStatus(slot, t("setup.person.tooBig"));
     return;
   }
   voiceNotes[slot] = blob || null;
@@ -394,7 +421,7 @@ function setVoiceNote(slot, blob) {
 function stopPreview() {
   if (previewAudio) { previewAudio.pause(); previewAudio.src = ""; previewAudio = null; }
   if (previewURL) { URL.revokeObjectURL(previewURL); previewURL = null; }
-  [1, 2].forEach((n) => { $(`voice-play-${n}`).textContent = "▶ Play"; });
+  [1, 2].forEach((n) => { $(`voice-play-${n}`).textContent = t("setup.person.play"); });
 }
 
 async function toggleRecord(slot) {
@@ -404,14 +431,14 @@ async function toggleRecord(slot) {
     return;
   }
   if (!navigator.mediaDevices || !window.MediaRecorder) {
-    voiceStatus(slot, "Recording isn’t available here — uploading a file works too.");
+    voiceStatus(slot, t("setup.person.noRecorder"));
     return;
   }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch {
-    voiceStatus(slot, "Couldn’t reach the microphone — uploading a file works too.");
+    voiceStatus(slot, t("setup.person.noMic"));
     return;
   }
   const chunks = [];
@@ -421,7 +448,7 @@ async function toggleRecord(slot) {
   recorder.onstop = () => {
     clearTimeout(recorderTimer);
     stream.getTracks().forEach((t) => t.stop());
-    btn.textContent = "● Record";
+    btn.textContent = t("setup.person.record");
     btn.classList.remove("recording");
     const type = recorder.mimeType || (chunks[0] && chunks[0].type) || "audio/webm";
     recorder = null;
@@ -429,9 +456,9 @@ async function toggleRecord(slot) {
     setVoiceNote(slot, new Blob(chunks, { type }));
   };
   recorder.start();
-  btn.textContent = "■ Stop";
+  btn.textContent = t("setup.person.stop");
   btn.classList.add("recording");
-  voiceStatus(slot, "Recording… tap stop when you’re done.");
+  voiceStatus(slot, t("setup.person.recording"));
   recorderTimer = setTimeout(() => {
     if (recorder && recorder.state === "recording") recorder.stop();
   }, MAX_RECORD_MS);
@@ -453,7 +480,7 @@ async function toggleRecord(slot) {
     previewAudio = new Audio(previewURL);
     previewAudio.addEventListener("ended", stopPreview);
     previewAudio.play().catch(() => {});
-    $(`voice-play-${slot}`).textContent = "■ Stop";
+    $(`voice-play-${slot}`).textContent = t("setup.person.stopPlay");
   });
   $(`voice-del-${slot}`).addEventListener("click", () => {
     stopPreview();
@@ -495,9 +522,11 @@ function fillSetupForm() {
   $("in-childhood").value = s.childhood;
   $("in-safespace").value = s.safeSpace;
   $("in-kindness").value = s.kindness;
+  $("in-crisis").value = s.crisisNumber;
   setTechniques(s.techniques);
   renderSongs(s.songs);
   selectChoice("music", s.musicMode || "playlist");
+  markChoice("lang", AnchorI18n.current());
 
   stopPreview();
   voiceStatus(1, ""); voiceStatus(2, "");
@@ -512,8 +541,16 @@ function fillSetupForm() {
   $("save-note").classList.add("hidden");
 }
 
+let setupAsSettings = false;
+
+function renderSetupHeader() {
+  $("setup-title").textContent = t(setupAsSettings ? "setup.titleSettings" : "setup.titleNew");
+  $("setup-sub").textContent = t(setupAsSettings ? "setup.subSettings" : "setup.subNew");
+}
+
 async function openSetup(asSettings) {
   await dataReady;
+  setupAsSettings = !!asSettings;
   fillSetupForm();
 
   $("setup-back").classList.remove("hidden");
@@ -521,10 +558,7 @@ async function openSetup(asSettings) {
   $("backup-group").classList.toggle("hidden", !(asSettings && AnchorBackup.available() && storageOk));
   $("backup-pass").value = "";
   $("backup-status").textContent = "";
-  $("setup-title").textContent = asSettings ? "Your anchor" : "Let’s set up your anchor";
-  $("setup-sub").textContent = asSettings
-    ? "Update anything, any time. It all stays on this phone."
-    : "Take your time. You only do this once, and everything stays on your phone — nothing is uploaded anywhere.";
+  renderSetupHeader();
   if (asSettings) renderLog();
 
   show("screen-setup");
@@ -548,6 +582,7 @@ function readSetupForm() {
     childhood: $("in-childhood").value.trim(),
     safeSpace: $("in-safespace").value.trim(),
     kindness: $("in-kindness").value.trim(),
+    crisisNumber: $("in-crisis").value.trim(),
   };
 }
 
@@ -558,7 +593,7 @@ $("setup-save").addEventListener("click", async () => {
   const btn = $("setup-save");
   const note = $("save-note");
   btn.disabled = true;
-  btn.textContent = "Saving…";
+  btn.textContent = t("setup.saving");
   stopPreview();
   settings = readSetupForm();
   try {
@@ -567,14 +602,12 @@ $("setup-save").addEventListener("click", async () => {
     show("screen-home");
   } catch (err) {
     console.warn("[Anchor] save failed", err);
-    note.textContent = storageOk
-      ? "Couldn’t write to this phone’s storage just now. Your anchor is still here on screen — try saving again in a moment."
-      : "This browser won’t let Anchor keep data between visits (private mode?). Your anchor will work until you close the app.";
+    note.textContent = t(storageOk ? "setup.saveFailed" : "setup.saveNoStorage");
     note.classList.remove("hidden");
     if (!storageOk) show("screen-home");
   } finally {
     btn.disabled = false;
-    btn.textContent = "Save my anchor";
+    btn.textContent = t("setup.save");
     saving = false;
   }
 });
@@ -588,11 +621,11 @@ async function renderLog() {
   const list = $("log-list");
   list.innerHTML = "";
   $("log-summary").textContent = entries.length
-    ? `${entries.length} moment${entries.length === 1 ? "" : "s"} you got through.`
-    : "Nothing logged yet — and that’s fine too.";
+    ? (entries.length === 1 ? t("setup.log.one") : t("setup.log.many", { n: entries.length }))
+    : t("setup.log.empty");
   entries.slice().reverse().forEach((ts) => {
     const li = document.createElement("li");
-    li.textContent = new Date(ts).toLocaleString(undefined, {
+    li.textContent = new Date(ts).toLocaleString(AnchorI18n.current(), {
       weekday: "short", month: "short", day: "numeric",
       hour: "numeric", minute: "2-digit",
     });
@@ -611,8 +644,9 @@ $("log-clear").addEventListener("click", async () => {
 function backupStatus(msg) { $("backup-status").textContent = msg || ""; }
 
 async function buildBackupPayload() {
-  const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques", "log"]);
+  const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques", "log", "meta"]);
   const plain = (rows) => rows.map((e) => ({ key: e.key, value: e.value }));
+  const prefs = plain(data.meta.filter((e) => e.key === "lang" || e.key === "crisisNumber"));
   const voice = [];
   for (const e of data.voice) {
     if (e.value instanceof Blob) voice.push({ key: e.key, value: await AnchorBackup.blobToRecord(e.value) });
@@ -629,7 +663,7 @@ async function buildBackupPayload() {
   return {
     app: "anchor", version: 1, exportedAt: new Date().toISOString(),
     persons: plain(data.persons), words: plain(data.words), techniques: plain(data.techniques),
-    log: plain(data.log), voice, songs,
+    log: plain(data.log), voice, songs, prefs,
   };
 }
 
@@ -653,6 +687,9 @@ function payloadToOps(p) {
       ops.push({ store: "songs", op: "put", key: e.key, value: { kind: "link", url: v.url } });
     }
   });
+  (p.prefs || []).forEach((e) => {
+    if (e.key === "lang" || e.key === "crisisNumber") ops.push({ store: "meta", op: "put", key: e.key, value: e.value });
+  });
   ops.push({ store: "meta", op: "put", key: "importedAt", value: Date.now() });
   return ops;
 }
@@ -660,7 +697,7 @@ function payloadToOps(p) {
 function passphraseOrNudge() {
   const pass = $("backup-pass").value;
   if (pass.length < 6) {
-    backupStatus("Choose a passphrase of at least 6 characters first — it’s the only key to this file.");
+    backupStatus(t("backup.needPass"));
     $("backup-pass").focus();
     return null;
   }
@@ -670,7 +707,7 @@ function passphraseOrNudge() {
 async function handToUser(blob, name) {
   const file = new File([blob], name, { type: "application/octet-stream" });
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: "Anchor backup" }); return "shared"; }
+    try { await navigator.share({ files: [file], title: t("backup.shareTitle") }); return "shared"; }
     catch (err) { if (err && err.name === "AbortError") return "cancelled"; }
   }
   const url = URL.createObjectURL(blob);
@@ -686,17 +723,15 @@ async function handToUser(blob, name) {
 $("backup-export").addEventListener("click", async () => {
   const pass = passphraseOrNudge();
   if (!pass) return;
-  backupStatus("Sealing your backup…");
+  backupStatus(t("backup.sealing"));
   try {
     const payload = await buildBackupPayload();
     const blob = await AnchorBackup.encrypt(payload, pass);
     const result = await handToUser(blob, AnchorBackup.fileName());
-    backupStatus(result === "cancelled"
-      ? "No file was saved."
-      : "Backup file ready. Keep it somewhere safe, and remember the passphrase — nobody can recover it for you.");
+    backupStatus(t(result === "cancelled" ? "backup.cancelled" : "backup.ready"));
   } catch (err) {
     console.warn("[Anchor] export failed", err);
-    backupStatus("Couldn’t create the backup just now. Nothing was changed.");
+    backupStatus(t("backup.failed"));
   }
 });
 
@@ -710,21 +745,21 @@ $("backup-file").addEventListener("change", async () => {
   $("backup-file").value = "";
   if (!file) return;
   const pass = $("backup-pass").value;
-  backupStatus("Unlocking your backup…");
+  backupStatus(t("backup.unlocking"));
   try {
     const payload = await AnchorBackup.decrypt(await file.arrayBuffer(), pass);
     await AnchorStore.write(payloadToOps(payload));
     await loadAll();
     fillSetupForm();
     renderLog();
-    backupStatus("Restored. Everything from that backup is back on this phone.");
+    backupStatus(t("backup.restored"));
   } catch (err) {
     const why = err && err.message;
-    backupStatus(why === "wrong-passphrase"
-      ? "That passphrase doesn’t open this file."
+    backupStatus(t(why === "wrong-passphrase"
+      ? "backup.wrongPass"
       : why === "not-a-backup" || why === "unknown-version"
-        ? "That doesn’t look like an Anchor backup file."
-        : "Couldn’t restore from that file. Nothing was changed.");
+        ? "backup.notBackup"
+        : "backup.restoreFailed"));
   }
 });
 
@@ -940,131 +975,8 @@ function stopAmbient() {
    AFFIRMATIONS
    ============================================================ */
 
-const GENERIC_LINES = [
-  // the wave passes
-  "This is a wave. It peaks — and then it always, always comes back down.",
-  "Panic has a ceiling. It cannot climb forever — it always runs out of fuel.",
-  "This feeling is loud, but it is temporary. Loud things tire quickly.",
-  "No panic attack in history has lasted forever. Not one.",
-  "The worst minute of this has either passed or will pass. Either way, it ends.",
-  "Feelings are weather. This is a storm, and storms move through.",
-  "You don’t have to make this stop. It stops on its own. It always does.",
-  "This has an ending built into it. Your body cannot hold this pace for long.",
-  "Every second that passes is a second closer to calm.",
-  "You’ve felt this rise before — which means you’ve also felt it fall.",
-  "The edge of this wave is closer than it feels.",
-  "This peak is the hardest part, and you’re already in it. From here, it eases.",
-  // your body is on your side
-  "Your heart is racing because your body is trying to protect you. It’s on your side.",
-  "This is adrenaline, not danger. It feels enormous, but it’s just chemistry moving through.",
-  "A racing heart is a strong heart doing its job. It can handle this easily.",
-  "Dizziness, tingling, a tight chest — these are panic’s signatures. Uncomfortable, not dangerous.",
-  "Your body thinks it’s helping. Thank it, and let it stand down.",
-  "You are not sick. You are not dying. Your alarm system is just ringing too loud.",
-  "Shaky hands mean your body is ready for action it doesn’t need. It will settle.",
-  "That tight chest is muscle tension, not your heart failing. It loosens when you exhale.",
-  "Adrenaline burns off in minutes. Your body is already clearing it.",
-  "Your nervous system fired an alarm. There is no fire. Alarms wind down.",
-  "That wave of heat is blood moving where your body thinks it’s needed. It passes.",
-  "Fainting from panic is rare — your blood pressure is up, not down. Your body’s got you.",
-  "Your body will not let you stop breathing. It’s been doing it your whole life, even while you sleep.",
-  // one breath at a time
-  "Nothing needs to be decided right now. Your only job is this one breath.",
-  "Long, slow exhales tell your body the coast is clear. It listens.",
-  "One breath, then one more. That’s the entire assignment.",
-  "You cannot breathe wrong here. Any breath that comes is fine.",
-  "Let your shoulders drop with the next breath out.",
-  "Slow the exhale, and the heart follows. It’s wired that way.",
-  "Air is coming in fine — even when it feels tight, you are getting enough.",
-  "Breathe with the rhythm on the screen. Borrow it until yours comes back.",
-  "Each exhale is a small message to your body: we’re safe.",
-  "Just this breath. Not the next hour. Just this breath.",
-  "Cool air in, warm air out. Your body knows this rhythm by heart.",
-  // you are here, and here is safe
-  "Right now, in this exact second, you are safe.",
-  "Look around — nothing here is attacking you. Your body just hasn’t caught up yet.",
-  "Feel your feet on the floor. The ground is holding you, the way it always has.",
-  "You are here. This is a real place, and you are really in it.",
-  "Name what’s around you. The real world is still here — steady, ordinary, safe.",
-  "The room hasn’t changed. Only the alarm in your body has. It will quiet.",
-  "You don’t have to fight this moment. You only have to stay in it.",
-  "Nothing terrible is happening in this room. Something uncomfortable is happening in your body.",
-  "Press your hand against something solid. Real. Cool. Still here.",
-  "The floor is under you. The walls are standing. Gravity works. You’re okay.",
-  "Notice one color in the room. Then another. The world is still in detail.",
-  // your unbroken record
-  "You have gotten through every hard moment of your life so far. Every single one.",
-  "You have a perfect record of surviving your worst days. Perfect.",
-  "This isn’t your first wave. You know how this goes — up, then down, then done.",
-  "Every panic attack you’ve ever had ended with you still here.",
-  "You already know how to do this. You’ve done it before, and it’s in you.",
-  "Your track record against hard moments is undefeated.",
-  "One day this will be a moment you got through. It’s already becoming that.",
-  "Future you is on the other side of this — and they made it there.",
-  "You’ve carried heavier than this. Your hands remember how.",
-  "This moment will end, and you will be the one who outlasted it.",
-  // you matter
-  "You matter — not for what you get done, but because you’re here.",
-  "Be as gentle with yourself right now as you’d be with a scared friend.",
-  "Panic is not weakness. It’s a body that cares about you, working overtime.",
-  "You are not broken. You are a person having a hard minute.",
-  "There is nothing shameful about this. Bodies do this. Good, strong bodies do this.",
-  "You are allowed to slow down. Everything else can wait.",
-  "Nobody is grading you on this moment. There is no wrong way to get through it.",
-  "You deserve the same kindness you give everyone else. Start now.",
-  "Being scared doesn’t make you weak. Staying with yourself through it makes you brave.",
-  "You are still you under all this noise. That hasn’t gone anywhere.",
-  "It’s okay that this happened. It says nothing bad about you.",
-  "You came here for help, and that was exactly right. That instinct protects you.",
-  // this moment is small
-  "You are one small person under a very big sky. This moment is smaller than it feels.",
-  "This hour is a speck in your life. It will not define the day, let alone you.",
-  "Zoom out: this is one moment on one day of the thousands you’ve lived.",
-  "The world is wide and patient. It will still be there when this passes.",
-  "Somewhere the ocean is moving and mountains are standing still. This moment is small.",
-  "This feeling fills the room, but it doesn’t fill your life. Not even close.",
-  "A year from now this will be a sentence, not a chapter.",
-  // nothing to solve right now
-  "Nothing has to be solved right now. Solving comes later. Breathing comes now.",
-  "Whatever triggered this can wait. It has no choice — it waits.",
-  "You don’t have to figure anything out mid-wave. Let it pass first.",
-  "There is no emergency to manage. The only task is to be here while this fades.",
-  "Put every problem down for five minutes. They can wait — they always can.",
-  // time is on your side
-  "Minutes are on your side. Let them pass — they’re doing the work for you.",
-  "You don’t have to do anything for this to end. Time alone will end it.",
-  "Panic burns hot and fast. It cannot keep this up. You can.",
-  "Stay put, breathe slow, and let the clock do the heavy lifting.",
-  // you are not alone
-  "You are not the only one who knows this feeling. Millions do — and they’re okay.",
-  "People you’ll never meet got through this exact feeling today. You’re in good company.",
-  "Someone who loves you would want to sit with you right now. Imagine them here beside you.",
-  "You are not alone in this, even when the room is empty.",
-  // let the body soften
-  "Unclench your jaw. Drop your shoulders. Let your hands go soft.",
-  "Your thoughts are sprinting. You don’t have to chase them.",
-  "Scary thoughts during panic are symptoms, not truths.",
-  "The thought “something is wrong” is part of the alarm — not evidence.",
-  "You can watch this feeling like weather through a window. You are the watcher, not the storm.",
-  "Let the wave carry you instead of fighting it. Floating takes less strength — and you have it.",
-  "Don’t add fear to fear. This is one alarm, and it’s already fading.",
-  "Softening beats bracing. Wherever you’re clenched, let it melt a little.",
-  "You’re doing it right now — getting through. This counts.",
-  "Small steady things are on your side: the floor, your breath, the next minute.",
-  "You’re okay. Not perfectly, not forever — just okay enough for this minute. That’s all you need.",
-];
-
-/* shown when they asked Anchor to find the words for them */
-const ANCHOR_WORDS = [
-  "Most people, most of the time, are quietly rooting for each other. Strangers included. You included.",
-  "The world is enormous, and this moment is one tiny corner of it. It cannot swallow you.",
-  "You have survived every single one of your hardest days. That record is unbroken, and it holds today too.",
-  "Look how far you’ve already come. Every step of it was real, and every step of it was yours.",
-  "Somewhere right now, a stranger is holding a door, waiting an extra moment, being kind for no reason. That world is your world.",
-  "This hour is small. You are not. The size of this feeling is not the size of your life.",
-  "You’ve walked through things you once thought would end you. They didn’t. This won’t either.",
-  "Ordinary kindness is everywhere, and you belong to it — given and received, more times than you can count.",
-];
+/* grounding phrases + Anchor's own words live in i18n/en.js and i18n/de.js:
+   t("panic.phrases"), t("panic.anchorWords") */
 
 let affirmationTimer = null;
 
@@ -1103,7 +1015,7 @@ function loopFeed(lines) {
    then the personal pass again, then 10 different generic ones — repeating,
    with the generic deck reshuffled once it runs dry */
 function alternatingFeed(personalLines) {
-  let genericPool = shuffled(GENERIC_LINES);
+  let genericPool = shuffled(t("panic.phrases"));
   let gIdx = 0;
   let queue = [];
   let personalNext = true;
@@ -1112,7 +1024,7 @@ function alternatingFeed(personalLines) {
       if (personalNext) {
         queue = [...personalLines];
       } else {
-        if (gIdx + 10 > genericPool.length) { genericPool = shuffled(GENERIC_LINES); gIdx = 0; }
+        if (gIdx + 10 > genericPool.length) { genericPool = shuffled(t("panic.phrases")); gIdx = 0; }
         queue = genericPool.slice(gIdx, gIdx + 10);
         gIdx += 10;
       }
@@ -1151,53 +1063,23 @@ function stopAffirmations() {
    GUIDED SEQUENCES — 5-4-3-2-1, muscle relaxation, cold water
    ============================================================ */
 
+/* chip labels, steps and cautions live in the dictionaries under
+   techniques.guides.<key>; only the timing stays here */
 const GUIDES = {
-  "54321": {
-    chip: "5‑4‑3‑2‑1 ground me",
-    stepMs: 18000,
-    steps: [
-      "Look around slowly.\nName 5 things you can see.",
-      "Now, 4 things you can physically feel.\nYour feet. The fabric on your skin.",
-      "Listen. 3 things you can hear,\neven quiet ones.",
-      "2 things you can smell —\nor two smells you love.",
-      "1 thing you can taste.\nJust notice it.",
-      "You’re here.\nYou’re okay. You did it.",
-    ],
-  },
-  pmr: {
-    chip: "Relax my muscles",
-    stepMs: 14000,
-    steps: [
-      "Your body is holding tension for you.\nLet’s hand it back, one group at a time.",
-      "Squeeze your hands into fists.\nHold tight… 5, 4, 3, 2, 1 — now let go. Feel them soften.",
-      "Pull your shoulders up toward your ears.\nHold… and release. Let them drop, heavy.",
-      "Scrunch your face — eyes, jaw, forehead.\nHold… now let your whole face go slack.",
-      "Tighten your stomach.\nHold… and breathe out long as you release.",
-      "Press your legs together, curl your toes.\nHold… and let everything go loose.",
-      "Notice how your body feels now.\nHeavier. Softer. You did that yourself.",
-    ],
-  },
-  tipp: {
-    chip: "Cold water reset",
-    stepMs: 16000,
-    caution: "Nicht geeignet bei Herzerkrankungen oder Herzrhythmusstörungen — im Zweifel eine andere Technik wählen.",
-    steps: [
-      "Cold can reset your nervous system fast.\nIf you can, move toward a sink.",
-      "Splash cold water on your face —\nor run it over the inside of your wrists.",
-      "Cold on your face triggers your dive reflex.\nIt slows your heart rate for you, automatically.",
-      "Stay with the cold for 15–30 seconds.\nKeep your exhales long and slow.",
-      "Notice your body settling.\nYou gave it exactly what it needed.",
-    ],
-  },
+  "54321": { key: "s54321", stepMs: 18000 },
+  pmr: { key: "pmr", stepMs: 14000 },
+  tipp: { key: "tipp", stepMs: 16000 },
 };
+
+function guideText(id) { return t(`techniques.guides.${GUIDES[id].key}`) || { steps: [] }; }
 
 let activeGuide = null; // guide id
 let guideIdx = -1;
 let guideTimer = null;
 
 function renderGuideStep() {
-  const guide = GUIDES[activeGuide];
-  $("guide-step").textContent = guide.steps[guideIdx];
+  const guide = guideText(activeGuide);
+  $("guide-step").textContent = guide.steps[guideIdx] || "";
   const caution = $("guide-caution");
   caution.textContent = guide.caution || "";
   caution.classList.toggle("hidden", !guide.caution);
@@ -1215,12 +1097,12 @@ function renderGuideStep() {
 function advanceGuide() {
   if (!activeGuide) return;
   clearTimeout(guideTimer);
-  const guide = GUIDES[activeGuide];
+  const steps = guideText(activeGuide).steps;
   guideIdx++;
-  if (guideIdx >= guide.steps.length) { stopGuide(); return; }
+  if (guideIdx >= steps.length) { stopGuide(); return; }
   renderGuideStep();
-  const isLast = guideIdx === guide.steps.length - 1;
-  guideTimer = setTimeout(advanceGuide, isLast ? 8000 : guide.stepMs);
+  const isLast = guideIdx === steps.length - 1;
+  guideTimer = setTimeout(advanceGuide, isLast ? 8000 : GUIDES[activeGuide].stepMs);
 }
 
 function startGuide(id) {
@@ -1249,7 +1131,7 @@ function buildChips(guideIds) {
     const btn = document.createElement("button");
     btn.className = "chip";
     btn.dataset.guide = id;
-    btn.textContent = GUIDES[id].chip;
+    btn.textContent = guideText(id).chip;
     btn.addEventListener("click", () => {
       if (activeGuide === id) stopGuide();
       else startGuide(id);
@@ -1342,10 +1224,35 @@ function isIOS() {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
-/* iOS wants  sms:NUMBER&body=…   Android wants  sms:NUMBER?body=… */
+/* iOS wants  sms:NUMBER&body=…   Android wants  sms:NUMBER?body=…
+   A custom text per person is kept as written; otherwise the default
+   follows the current language. */
 function smsHref(phone, body) {
   const sep = isIOS() ? "&" : "?";
-  return `sms:${cleanPhone(phone)}${sep}body=${encodeURIComponent(body || DEFAULT_SMS)}`;
+  return `sms:${cleanPhone(phone)}${sep}body=${encodeURIComponent(body || t("panic.smsDefault"))}`;
+}
+
+/* Region-aware, not language-aware: a number the user entered replaces
+   the language defaults. Never a modal, never a prompt. */
+function renderCrisisLine() {
+  const el = $("crisis-line");
+  el.textContent = "";
+  el.appendChild(document.createTextNode(t("panic.crisisMore") + " "));
+  const custom = cleanPhone(settings.crisisNumber);
+  const links = custom
+    ? [{ label: settings.crisisNumber.trim(), tel: custom }]
+    : t("panic.crisisLinks");
+  links.forEach((link, i) => {
+    if (i) el.appendChild(document.createTextNode(" · "));
+    if (link.tel) {
+      const a = document.createElement("a");
+      a.href = "tel:" + link.tel;
+      a.textContent = link.label;
+      el.appendChild(a);
+    } else {
+      el.appendChild(document.createTextNode(link.label));
+    }
+  });
 }
 
 function panicLoop(now) {
@@ -1378,7 +1285,8 @@ function showCallFallback(calledSlot) {
     const a = $(slot === 1 ? "btn-sms" : "btn-sms2");
     if (!phone) { a.classList.add("hidden"); return; }
     a.href = smsHref(phone, sms);
-    $(slot === 1 ? "sms-label" : "sms-label2").textContent = name ? `Text ${name}` : (slot === 1 ? "Text them" : "Text my second person");
+    $(slot === 1 ? "sms-label" : "sms-label2").textContent =
+      name ? t("panic.textName", { name }) : t(slot === 1 ? "panic.textThem" : "panic.textSecond");
     a.classList.remove("hidden");
     any = true;
   });
@@ -1412,7 +1320,7 @@ function applyPersonalization() {
   const voiceBlob = voiceNotes[1] || voiceNotes[2];
   if (techniques.includes("voice") && voiceBlob) {
     const whose = voiceNotes[1] ? s.safeName : s.safeName2;
-    addExtraChip("voice", whose ? `${whose}’s voice` : "Their voice", () => {
+    addExtraChip("voice", whose ? t("panic.voiceChip", { name: whose }) : t("panic.theirVoice"), () => {
       if (voiceLoop) stopVoiceLoop();
       else startVoiceLoop(voiceBlob);
     });
@@ -1422,15 +1330,15 @@ function applyPersonalization() {
   // songs: files play here, links open in their app
   sessionSongs = (s.musicMode === "playlist" && s.songs.length) ? s.songs : [];
   songIdx = 0;
-  $("music-label").textContent = sessionSongs.length ? "Play my calming music" : "Play calming sounds";
+  $("music-label").textContent = t(sessionSongs.length ? "panic.musicPlay" : "panic.musicSounds");
   if (techniques.includes("song") && sessionSongs.length) {
-    addExtraChip("song", "♫ My calming song", playNextSong);
+    addExtraChip("song", t("panic.songChip"), playNextSong);
   }
 
   // call buttons — hidden entirely when there's nobody to call
   const callBtn = $("btn-call");
   if (s.safePhone) {
-    $("call-label").textContent = s.safeName ? `Call ${s.safeName}` : "Call my person";
+    $("call-label").textContent = s.safeName ? t("panic.callName", { name: s.safeName }) : t("panic.callPerson");
     callBtn.href = "tel:" + cleanPhone(s.safePhone);
     callBtn.classList.remove("hidden");
   } else {
@@ -1438,7 +1346,7 @@ function applyPersonalization() {
   }
   const callBtn2 = $("btn-call2");
   if (s.safePhone2) {
-    $("call-label2").textContent = s.safeName2 ? `Call ${s.safeName2}` : "Call my second person";
+    $("call-label2").textContent = s.safeName2 ? t("panic.callName", { name: s.safeName2 }) : t("panic.callSecond");
     callBtn2.href = "tel:" + cleanPhone(s.safePhone2);
     callBtn2.classList.remove("hidden");
   } else {
@@ -1446,21 +1354,22 @@ function applyPersonalization() {
   }
   callBtn.classList.remove("pulse"); callBtn2.classList.remove("pulse");
   $("call-fallback").classList.add("hidden");
+  renderCrisisLine();
 
   // their words (verbatim under a fixed lead-in, alternating with the
   // generic arsenal), Anchor's words, or the generic arsenal alone
   const personal = [];
   if (!s.autoWords) {
-    if (s.proud) personal.push({ lead: "Something you’re proud of:", body: s.proud });
-    if (s.goal) personal.push({ lead: "Something you’re working toward:", body: s.goal });
-    if (s.childhood) personal.push({ lead: "A memory to hold onto:", body: s.childhood });
-    if (s.safeSpace) personal.push({ lead: "Your safe space is waiting:", body: s.safeSpace });
-    if (s.kindness) personal.push({ lead: "A kindness someone showed you:", body: s.kindness });
+    if (s.proud) personal.push({ lead: t("panic.leads.proud"), body: s.proud });
+    if (s.goal) personal.push({ lead: t("panic.leads.goal"), body: s.goal });
+    if (s.childhood) personal.push({ lead: t("panic.leads.childhood"), body: s.childhood });
+    if (s.safeSpace) personal.push({ lead: t("panic.leads.safeSpace"), body: s.safeSpace });
+    if (s.kindness) personal.push({ lead: t("panic.leads.kindness"), body: s.kindness });
   }
   let feed;
-  if (s.autoWords) feed = loopFeed(shuffled(ANCHOR_WORDS));
+  if (s.autoWords) feed = loopFeed(shuffled(t("panic.anchorWords")));
   else if (personal.length) feed = alternatingFeed(personal);
-  else feed = loopFeed(shuffled(GENERIC_LINES));
+  else feed = loopFeed(shuffled(t("panic.phrases")));
   stopAffirmations();
   startAffirmations(feed);
 
@@ -1500,14 +1409,14 @@ function playNextSong() {
     playSongBlob(song, () => {
       // roll straight into the next one so the music doesn't just stop on them
       if (panicActive && sessionSongs.length > 1) playNextSong();
-      else $("music-label").textContent = "Play my calming music";
+      else $("music-label").textContent = t("panic.musicPlay");
     });
-    $("music-label").textContent = sessionSongs.length > 1 ? "Next song" : "Playing your song";
+    $("music-label").textContent = t(sessionSongs.length > 1 ? "panic.musicNext" : "panic.musicPlaying");
   } else {
     let url = song.url;
     if (!/^https?:\/\//i.test(url)) url = "https://" + url;
     window.open(url, "_blank", "noopener");
-    if (sessionSongs.length > 1) $("music-label").textContent = "Next song";
+    if (sessionSongs.length > 1) $("music-label").textContent = t("panic.musicNext");
   }
 }
 
@@ -1534,10 +1443,10 @@ $("btn-music").addEventListener("click", () => {
   } else {
     if (ambient) {
       stopAmbient();
-      $("music-label").textContent = "Play calming sounds";
+      $("music-label").textContent = t("panic.musicSounds");
     } else {
       startAmbient();
-      $("music-label").textContent = "Pause calming sounds";
+      $("music-label").textContent = t("panic.musicPause");
     }
   }
 });
@@ -1555,9 +1464,9 @@ $("btn-log").addEventListener("click", async () => {
   const btn = $("btn-log");
   btn.disabled = true;
   try { await appendLog(Date.now()); } catch {}
-  btn.textContent = "Logged ✓";
+  btn.textContent = t("after.logged");
   setTimeout(() => {
-    btn.textContent = "Log this episode";
+    btn.textContent = t("after.log");
     btn.disabled = false;
     show("screen-home");
   }, 900);
@@ -1568,6 +1477,25 @@ $("btn-done").addEventListener("click", () => show("screen-home"));
 /* ============================================================
    BOOT — home first, always; setup never blocks a panic moment
    ============================================================ */
+
+/* language: auto-detect now (de* → German, else English); a stored
+   choice overrides this as soon as the plan loads. Never prompted. */
+AnchorI18n.setLanguage(AnchorI18n.detect());
+
+/* everything rendered from JS rather than data-i18n, refreshed live on a
+   language change */
+AnchorI18n.onChange(() => {
+  renderSetupHeader();
+  markChoice("lang", AnchorI18n.current());
+  syncVoiceUI(1); syncVoiceUI(2);
+  $("song-status").textContent = "";
+  if ($("screen-setup").classList.contains("active") && setupAsSettings) renderLog();
+  renderCrisisLine();
+  if (panicActive) {
+    $("music-label").textContent = t(sessionSongs.length ? "panic.musicPlay" : "panic.musicSounds");
+    if (activeGuide) renderGuideStep();
+  }
+});
 
 show("screen-home");
 

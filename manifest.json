@@ -2,6 +2,7 @@
   "name": "Anchor — panic companion",
   "short_name": "Anchor",
   "description": "A one-tap panic attack companion. Your own words, ready when you need them.",
+  "lang": "en",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

@@ -329,6 +329,7 @@ body {
   font-size: 0.85rem;
   opacity: 0.8;
 }
+.privacy-link { color: var(--teal); text-decoration: underline; text-underline-offset: 3px; }
 
 #log-list { list-style: none; margin-bottom: 12px; }
 #log-list li {
