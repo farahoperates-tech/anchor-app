@@ -112,4 +112,4 @@ npx netlify-cli deploy --prod --dir .
 
 ---
 
-© 2026 Farah Alzubaidi. All rights reserved.
+© 2026 Anchor. All rights reserved.
