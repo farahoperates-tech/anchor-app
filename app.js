@@ -29,6 +29,8 @@ let settings = emptySettings();
 const voiceNotes = { 1: null, 2: null };   // Blobs
 let storageOk = true;                       // false → IndexedDB unavailable (memory only)
 let consentGiven = false;                   // one-time disclaimer accepted (meta.consentAt)
+const HAPTICS_SUPPORTED = "vibrate" in navigator;
+let hapticsOn = true;                       // default ON where supported (meta.haptics)
 let panicNoticeShown = false;               // the one quiet first-panic line was shown (meta.panicNoticeAt)
 
 function hasSetup() {
@@ -54,6 +56,7 @@ function snapshotOps() {
     } },
     { store: "techniques", op: "put", key: "prefs", value: { techniques: [...s.techniques], musicMode: s.musicMode } },
     { store: "meta", op: "put", key: "crisisNumber", value: s.crisisNumber || "" },
+    { store: "meta", op: "put", key: "haptics", value: hapticsOn },
     { store: "meta", op: "put", key: "lang", value: AnchorI18n.current() },
     { store: "songs", op: "clear" },
   ];
@@ -96,6 +99,7 @@ function applyLoaded(data) {
   const meta = (k) => (data.meta.find((e) => e.key === k) || {}).value;
   s.crisisNumber = meta("crisisNumber") || "";
   consentGiven = !!meta("consentAt");
+  hapticsOn = meta("haptics") !== false;
   panicNoticeShown = !!meta("panicNoticeAt");
   settings = s;
   voiceNotes[1] = null; voiceNotes[2] = null;
@@ -511,6 +515,17 @@ $("toggle-autowords").addEventListener("click", () => {
   syncAutoWords();
 });
 
+/* ---------- haptics toggle (hidden entirely where unsupported) ---------- */
+
+function syncHaptics() {
+  $("toggle-haptics").classList.toggle("selected", hapticsOn);
+}
+
+$("toggle-haptics").addEventListener("click", () => {
+  hapticsOn = !hapticsOn;
+  syncHaptics();
+});
+
 /* ---------- setup screen ---------- */
 
 function fillSetupForm() {
@@ -542,6 +557,8 @@ function fillSetupForm() {
 
   autoWords = !!s.autoWords;
   syncAutoWords();
+  $("haptics-group").classList.toggle("hidden", !HAPTICS_SUPPORTED);
+  syncHaptics();
   $("save-note").classList.add("hidden");
 }
 
@@ -650,7 +667,7 @@ function backupStatus(msg) { $("backup-status").textContent = msg || ""; }
 async function buildBackupPayload() {
   const data = await AnchorStore.readAll(["persons", "voice", "songs", "words", "techniques", "log", "meta"]);
   const plain = (rows) => rows.map((e) => ({ key: e.key, value: e.value }));
-  const prefs = plain(data.meta.filter((e) => e.key === "lang" || e.key === "crisisNumber" || e.key === "consentAt"));
+  const prefs = plain(data.meta.filter((e) => e.key === "lang" || e.key === "crisisNumber" || e.key === "consentAt" || e.key === "haptics"));
   const voice = [];
   for (const e of data.voice) {
     if (e.value instanceof Blob) voice.push({ key: e.key, value: await AnchorBackup.blobToRecord(e.value) });
@@ -692,7 +709,7 @@ function payloadToOps(p) {
     }
   });
   (p.prefs || []).forEach((e) => {
-    if (e.key === "lang" || e.key === "crisisNumber" || e.key === "consentAt") ops.push({ store: "meta", op: "put", key: e.key, value: e.value });
+    if (e.key === "lang" || e.key === "crisisNumber" || e.key === "consentAt" || e.key === "haptics") ops.push({ store: "meta", op: "put", key: e.key, value: e.value });
   });
   ops.push({ store: "meta", op: "put", key: "importedAt", value: Date.now() });
   return ops;
@@ -1288,9 +1305,39 @@ function renderCrisisLine() {
   });
 }
 
+/* ---------- breath-synced haptics: one soft pulse at each phase START,
+   never continuous; silent no-op where unsupported (iOS) ---------- */
+
+let lastPhaseIdx = -1;
+
+function breathPhaseIndex(ms) {
+  let rem = ((ms % cycleMs) + cycleMs) % cycleMs;
+  for (let i = 0; i < pattern.phases.length; i++) {
+    if (rem < pattern.phases[i].dur) return i;
+    rem -= pattern.phases[i].dur;
+  }
+  return 0;
+}
+
+function breathHaptic(idx) {
+  if (!HAPTICS_SUPPORTED || !hapticsOn) return;
+  const ph = pattern.phases[idx];
+  try {
+    if (ph.from === 0 && ph.to === 1) navigator.vibrate(40);           // inhale start: one soft pulse
+    else if (ph.from === 1 && ph.to === 0) navigator.vibrate([30, 90, 30]); // exhale start: two soft ticks
+    // hold / rest phases (from === to): nothing
+  } catch {}
+}
+
 function panicLoop(now) {
   const elapsed = now - panicStart;
   const b = breathValue(elapsed);
+
+  const phaseIdx = breathPhaseIndex(elapsed);
+  if (phaseIdx !== lastPhaseIdx) {
+    lastPhaseIdx = phaseIdx;
+    breathHaptic(phaseIdx);
+  }
 
   drawParticles(elapsed);
   updateBreathTone(b);
@@ -1423,6 +1470,7 @@ function startPanic() {
   makeParticles();
 
   // visuals + tone first, unconditionally — nothing below may delay this
+  lastPhaseIdx = -1;
   panicStart = performance.now();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(panicLoop);
@@ -1465,6 +1513,7 @@ function endPanic(toAfterScreen) {
   stopAffirmations();
   stopGuide();
   stopVoiceLoop();
+  if (HAPTICS_SUPPORTED) { try { navigator.vibrate(0); } catch {} }   // cancel anything queued
   $("panic-notice").classList.add("hidden");
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   show(toAfterScreen ? "screen-after" : "screen-home");

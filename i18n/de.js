@@ -108,6 +108,13 @@ window.ANCHOR_I18N.de = {
       ph: "z. B. 0800 111 0 111, 142, 143",
     },
 
+    haptics: {
+      title: "Vibration",
+      hint: "Ein sanfter Impuls vom Atem-Taktgeber — nur auf Handys, die das können.",
+      toggle: "Vibration beim Atem-Taktgeber",
+      toggleSub: "sanfte Impulse bei jedem Ein- und Ausatmen, nie durchgehend",
+    },
+
     language: {
       title: "Sprache",
       hint: "Wirkt sofort. Sätze und Techniken wechseln mit.",

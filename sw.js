@@ -1,6 +1,6 @@
 /* Anchor service worker — network-first so updates show up right away,
    with the cache as an offline fallback */
-const CACHE = "anchor-v13";
+const CACHE = "anchor-v14";
 const ASSETS = [
   ".",
   "index.html",

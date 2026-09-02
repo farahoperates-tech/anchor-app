@@ -167,6 +167,13 @@
         </label>
       </div>
 
+      <!-- hidden entirely where the Vibration API is unsupported (iOS) -->
+      <div class="field-group hidden" id="haptics-group">
+        <h2 data-i18n="setup.haptics.title"></h2>
+        <p class="hint" data-i18n="setup.haptics.hint"></p>
+        <button type="button" id="toggle-haptics" class="toggle-btn"><span data-i18n="setup.haptics.toggle"></span><small data-i18n="setup.haptics.toggleSub"></small></button>
+      </div>
+
       <div class="field-group">
         <h2 data-i18n="setup.language.title"></h2>
         <p class="hint" data-i18n="setup.language.hint"></p>

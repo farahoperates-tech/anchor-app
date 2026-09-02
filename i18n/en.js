@@ -107,6 +107,13 @@ window.ANCHOR_I18N.en = {
       ph: "e.g. 988, 116 123, 0800 111 0 111",
     },
 
+    haptics: {
+      title: "Vibration",
+      hint: "A gentle pulse from the breathing pacer — only on phones that support it.",
+      toggle: "Vibration with the breathing pacer",
+      toggleSub: "soft pulses at each inhale and exhale, never continuous",
+    },
+
     language: {
       title: "Language",
       hint: "Changes right away. Grounding phrases and techniques follow along.",
